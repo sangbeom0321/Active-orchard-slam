@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<library path="orbit_panel_plugin">
+  <class name="orbit_planner/OrbitPanelPlugin" type="orbit_planner::OrbitPanelPlugin" base_class_type="rviz_common::Panel">
+    <description>Orbit Planner Panel for autonomous orchard exploration</description>
+  </class>
+</library>

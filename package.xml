@@ -1,0 +1,62 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>aos</name>
+  <version>1.0.0</version>
+  <description>Orbit Planner: Map-Free Navigation for Orchard Monitoring and Mapping</description>
+  
+  <maintainer email="bluekds@koreatech.ac.kr">Duksu Kim</maintainer>
+  <license>MIT</license>
+  
+  <url type="website">https://github.com/aomr/orbit_planner</url>
+  <url type="repository">https://github.com/aomr/orbit_planner</url>
+  <url type="bugtracker">https://github.com/aomr/orbit_planner/issues</url>
+  
+  <author email="bluekds@koreatech.ac.kr">Sangbeom Woo</author>
+  <author email="bluekds@koreatech.ac.kr">Duksu Kim</author>
+  
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  
+  <!-- ROS2 Core Dependencies -->
+  <depend>rclcpp</depend>
+  <depend>rclcpp_components</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <depend>tf2_eigen</depend>
+  <depend>std_srvs</depend>
+  
+  <!-- PCL Dependencies -->
+  <depend>pcl_ros</depend>
+  <depend>pcl_conversions</depend>
+  
+  <!-- Eigen Dependencies -->
+  <depend>eigen3_cmake_module</depend>
+  
+  <!-- OpenCV Dependencies -->
+  <depend>libopencv-dev</depend>
+  
+  <!-- RViz Dependencies -->
+  <depend>rviz_common</depend>
+  <depend>rviz_rendering</depend>
+  <depend>rviz_visual_tools</depend>
+  <depend>pluginlib</depend>
+  
+  <!-- Qt Dependencies for RViz Panel -->
+  <depend>qtbase5-dev</depend>
+  
+  <!-- Test Dependencies -->
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+  
+  <export>
+    <build_type>ament_cmake</build_type>
+    <rviz plugin="${prefix}/rviz/orbit_panel_plugin.xml"/>
+  </export>
+</package>

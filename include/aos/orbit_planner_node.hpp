@@ -117,10 +117,8 @@ private:
     
     // State Management
     ExplorationState state_;
-    std::mutex state_mutex_;
-    
-    // Tree detection results
     std::vector<TreeRow> current_tree_rows_;
+    std::mutex state_mutex_;
     
     // Threading
     std::thread exploration_thread_;
@@ -211,19 +209,18 @@ private:
     void publishFilteredHeightBandVisualization(const pcl::PointCloud<pcl::PointXYZ>::Ptr& filtered_cloud);
     
     // PCD to Occupancy Grid conversion
+    nav_msgs::msg::OccupancyGrid convertPCDToOccupancyGrid(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud);
     nav_msgs::msg::OccupancyGrid convertPCDToOccupancyGrid(const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud, const std::vector<TreeRow>& tree_rows);
     
     // 2D Ray casting for occupancy mapping
     std::vector<std::pair<int, int>> raycast2D(int x0, int y0, int x1, int y1);
+    void addRowToOccupancyGrid(nav_msgs::msg::OccupancyGrid& occupancy_grid, const TreeRow& row, double resolution);
     
     // Distance calculation utilities
     double distancePointToLineSegment(double px, double py, double x1, double y1, double x2, double y2);
     
     // Visualization utilities
     void publishSensorMarker(const geometry_msgs::msg::PoseStamped& sensor_pose);
-    
-    // Row to occupancy grid conversion
-    void addRowToOccupancyGrid(nav_msgs::msg::OccupancyGrid& occupancy_grid, const TreeRow& row, double resolution);
     
     // Parameter Loading
     void loadParameters();

@@ -41,6 +41,7 @@
 #include <geometry_msgs/msg/point_stamped.hpp>
 #include <geometry_msgs/msg/polygon_stamped.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/pose_array.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
 #include <nav_msgs/msg/odometry.hpp>
@@ -66,6 +67,9 @@ public:
 
 private slots:
     // UI event handlers
+    void onAddWaypoint();
+    void onClearWaypoints();
+    void onPublishWaypoints();
     void onAddPolygonPoint();
     void onClearPolygon();
     void onPublishGrid();
@@ -87,6 +91,7 @@ private:
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr start_pose_pub_;
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr polygon_marker_pub_;
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr occupancy_grid_pub_;
+    rclcpp::Publisher<geometry_msgs::msg::PoseArray>::SharedPtr waypoints_pub_;
     
     // Subscribers
     rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr clicked_point_sub_;
@@ -106,6 +111,11 @@ private:
     
     // Control Tab
     QWidget* control_tab_;
+    QPushButton* add_waypoint_btn_;
+    QPushButton* clear_waypoints_btn_;
+    QPushButton* publish_waypoints_btn_;
+    QListWidget* waypoints_list_;
+    QLabel* waypoints_count_label_;
     QPushButton* add_point_btn_;
     QPushButton* clear_polygon_btn_;
     QPushButton* publish_grid_btn_;
@@ -145,10 +155,12 @@ private:
     QDoubleSpinBox* orbit_spacing_spin_;
     
     // Data
+    std::vector<geometry_msgs::msg::Point> waypoints_;
     std::vector<geometry_msgs::msg::Point> polygon_points_;
     geometry_msgs::msg::PointStamped start_point_;
     geometry_msgs::msg::PoseStamped current_pose_;
     bool start_point_selected_;
+    bool add_waypoint_mode_;
     bool add_point_mode_;
     bool current_pose_received_;
     bool exploration_active_;

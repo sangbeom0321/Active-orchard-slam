@@ -69,6 +69,7 @@ OrbitPanelPlugin::OrbitPanelPlugin(QWidget* parent)
     // Initialize variables
     exploration_active_ = false;
     add_point_mode_ = false;
+    add_waypoint_mode_ = false;
     start_point_selected_ = false;
     current_pose_received_ = false;
     frontiers_count_ = 0;
@@ -195,8 +196,77 @@ void OrbitPanelPlugin::onInitialize() {
 // UI event handlers
 // onStartPointClicked function removed - now using current odometry position
 
+void OrbitPanelPlugin::onAddWaypoint() {
+    logMessage("onAddWaypoint() called");
+    
+    // If in polygon mode, exit it first
+    if (add_point_mode_) {
+        add_point_mode_ = false;
+        add_point_btn_->setText("Add Points");
+        add_point_btn_->setStyleSheet("");
+        logMessage("Exited Polygon Mode");
+    }
+    
+    // Toggle add waypoint mode
+    add_waypoint_mode_ = !add_waypoint_mode_;
+    
+    if (add_waypoint_mode_) {
+        add_waypoint_btn_->setText("Stop Adding Waypoints");
+        add_waypoint_btn_->setStyleSheet("QPushButton { background-color: #4CAF50; color: white; }");
+        logMessage("Add Waypoint Mode: ON - Click on the map to add waypoints");
+    } else {
+        add_waypoint_btn_->setText("Add Waypoint");
+        add_waypoint_btn_->setStyleSheet("");
+        logMessage("Add Waypoint Mode: OFF - " + std::to_string(waypoints_.size()) + " waypoints collected");
+    }
+}
+
+void OrbitPanelPlugin::onClearWaypoints() {
+    waypoints_.clear();
+    waypoints_list_->clear();
+    add_waypoint_mode_ = false;
+    add_waypoint_btn_->setText("Add Waypoint");
+    add_waypoint_btn_->setStyleSheet("");
+    
+    // Update waypoints count label
+    waypoints_count_label_->setText("Waypoints: 0");
+    
+    logMessage("All waypoints cleared");
+}
+
+void OrbitPanelPlugin::onPublishWaypoints() {
+    if (waypoints_.empty()) {
+        logMessage("No waypoints to publish");
+        return;
+    }
+    
+    // Publish waypoints as PoseStamped array
+    geometry_msgs::msg::PoseArray waypoints_msg;
+    waypoints_msg.header.stamp = ros_node_->now();
+    waypoints_msg.header.frame_id = "map";
+    
+    for (const auto& waypoint : waypoints_) {
+        geometry_msgs::msg::PoseStamped pose;
+        pose.header = waypoints_msg.header;
+        pose.pose.position = waypoint;
+        pose.pose.orientation.w = 1.0;
+        waypoints_msg.poses.push_back(pose.pose);
+    }
+    
+    waypoints_pub_->publish(waypoints_msg);
+    logMessage("Published " + std::to_string(waypoints_.size()) + " waypoints");
+}
+
 void OrbitPanelPlugin::onAddPolygonPoint() {
     logMessage("onAddPolygonPoint() called"); // Debug message
+    
+    // If in waypoint mode, exit it first
+    if (add_waypoint_mode_) {
+        add_waypoint_mode_ = false;
+        add_waypoint_btn_->setText("Add Waypoint");
+        add_waypoint_btn_->setStyleSheet("");
+        logMessage("Exited Waypoint Mode");
+    }
     
     // If in start point mode, exit it first
     if (start_point_selected_) {
@@ -271,6 +341,28 @@ void OrbitPanelPlugin::setupControlTab() {
     QVBoxLayout* layout = new QVBoxLayout(control_tab_);
     
     // Start point selection (removed - will use current odometry position)
+    
+    // Waypoint management
+    QGroupBox* waypoint_group = new QGroupBox("Waypoints");
+    QVBoxLayout* waypoint_layout = new QVBoxLayout(waypoint_group);
+    
+    QHBoxLayout* waypoint_btn_layout = new QHBoxLayout();
+    add_waypoint_btn_ = new QPushButton("Add Waypoint");
+    clear_waypoints_btn_ = new QPushButton("Clear Waypoints");
+    publish_waypoints_btn_ = new QPushButton("Publish Waypoints");
+    waypoint_btn_layout->addWidget(add_waypoint_btn_);
+    waypoint_btn_layout->addWidget(clear_waypoints_btn_);
+    waypoint_btn_layout->addWidget(publish_waypoints_btn_);
+    waypoint_layout->addLayout(waypoint_btn_layout);
+    
+    waypoints_list_ = new QListWidget();
+    waypoints_list_->setMaximumHeight(100);
+    waypoint_layout->addWidget(waypoints_list_);
+    
+    waypoints_count_label_ = new QLabel("Waypoints: 0");
+    waypoint_layout->addWidget(waypoints_count_label_);
+    
+    layout->addWidget(waypoint_group);
     
     // Polygon management
     QGroupBox* polygon_group = new QGroupBox("Exploration Area");
@@ -476,6 +568,8 @@ void OrbitPanelPlugin::setupROS2() {
         "/orbit_planner/polygon_marker", 10);
     occupancy_grid_pub_ = ros_node_->create_publisher<nav_msgs::msg::OccupancyGrid>(
         "/orbit_planner/occupancy", 10);
+    waypoints_pub_ = ros_node_->create_publisher<geometry_msgs::msg::PoseArray>(
+        "/gvd/waypoints", 10);
     
     // Subscribe to odometry for current position
     odometry_sub_ = ros_node_->create_subscription<nav_msgs::msg::Odometry>(
@@ -486,12 +580,34 @@ void OrbitPanelPlugin::setupROS2() {
             current_pose_received_ = true;
         });
     
-    // Subscribe to RViz default clicked point to collect polygon vertices
+    // Subscribe to RViz default clicked point to collect polygon vertices and waypoints
     clicked_point_sub_ = ros_node_->create_subscription<geometry_msgs::msg::PointStamped>(
         "/clicked_point", 10,
         [this](const geometry_msgs::msg::PointStamped::SharedPtr msg){
+            // When user is in Add Waypoint mode, add waypoints
+            if (add_waypoint_mode_) {
+                geometry_msgs::msg::Point p;
+                p.x = msg->point.x;
+                p.y = msg->point.y;
+                p.z = 0.0;  // 2D waypoint - force z=0
+                waypoints_.push_back(p);
+                
+                // Update waypoints list widget
+                QString waypoint_text = QString("WP%1: (%.2f, %.2f)")
+                    .arg(waypoints_.size())
+                    .arg(p.x)
+                    .arg(p.y);
+                waypoints_list_->addItem(waypoint_text);
+                
+                // Update waypoints count label
+                QString count_text = QString("Waypoints: %1").arg(waypoints_.size());
+                waypoints_count_label_->setText(count_text);
+                
+                logMessage("Added waypoint " + std::to_string(waypoints_.size()) + 
+                          " at (" + std::to_string(p.x) + ", " + std::to_string(p.y) + ")");
+            }
             // When user is in Add Point mode, push points
-            if (add_point_mode_) {
+            else if (add_point_mode_) {
                 geometry_msgs::msg::Point p;
                 p.x = msg->point.x;
                 p.y = msg->point.y;
@@ -528,6 +644,9 @@ void OrbitPanelPlugin::setupROS2() {
 
 void OrbitPanelPlugin::connectSignals() {
     // Connect button signals
+    connect(add_waypoint_btn_, &QPushButton::clicked, this, &OrbitPanelPlugin::onAddWaypoint);
+    connect(clear_waypoints_btn_, &QPushButton::clicked, this, &OrbitPanelPlugin::onClearWaypoints);
+    connect(publish_waypoints_btn_, &QPushButton::clicked, this, &OrbitPanelPlugin::onPublishWaypoints);
     connect(add_point_btn_, &QPushButton::clicked, this, &OrbitPanelPlugin::onAddPolygonPoint);
     connect(clear_polygon_btn_, &QPushButton::clicked, this, &OrbitPanelPlugin::onClearPolygon);
     connect(publish_grid_btn_, &QPushButton::clicked, this, &OrbitPanelPlugin::onPublishGrid);

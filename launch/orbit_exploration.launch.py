@@ -43,7 +43,7 @@ def generate_launch_description():
     # GVD topology arguments
     connect_radius_arg = DeclareLaunchArgument(
         'connect_radius', 
-        default_value='5', 
+        default_value='20', 
         description='Graph connection radius (cells)'
     )
     ns_arg = DeclareLaunchArgument(
@@ -98,13 +98,15 @@ def generate_launch_description():
         executable='gvd_topology_node',
         name='gvd_topology_node',
         output='screen',
-        parameters=[{
-            'connect_radius': LaunchConfiguration('connect_radius'),
-            'publish_namespace': LaunchConfiguration('ns'),
-            'subscribe_topic': LaunchConfiguration('occupancy_topic'),
-            'goal_topic': LaunchConfiguration('goal_topic'),
-            'use_sim_time': LaunchConfiguration('use_sim_time')
-        }]
+        parameters=[
+            LaunchConfiguration('config_file'),
+            {
+                'publish_namespace': LaunchConfiguration('ns'),
+                'subscribe_topic': LaunchConfiguration('occupancy_topic'),
+                'goal_topic': LaunchConfiguration('goal_topic'),
+                'use_sim_time': LaunchConfiguration('use_sim_time')
+            }
+        ]
     )
     
     # Launch RViz

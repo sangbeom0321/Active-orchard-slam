@@ -28,7 +28,7 @@
     tree_min_cluster_size: 10
 
     # Row detection parameters
-    row_tolerance: 1.7
+    row_tolerance: 1.5
     row_min_length: 5.0
     row_min_trees: 3
     
@@ -53,4 +53,4 @@
     esdf_update_rate: 2.0
 
     # GVD Topology parameters
-    connect_radius: 8
+    connect_radius: 10

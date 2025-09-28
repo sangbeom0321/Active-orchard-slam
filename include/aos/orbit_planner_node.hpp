@@ -32,6 +32,7 @@
 #include <visualization_msgs/msg/marker.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <std_srvs/srv/empty.hpp>
+#include <std_msgs/msg/string.hpp>
 
 #include <tf2_ros/transform_listener.h>
 #include <tf2_ros/buffer.h>
@@ -85,6 +86,7 @@ private:
     rclcpp::Subscription<geometry_msgs::msg::PolygonStamped>::SharedPtr area_sub_;
     rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr start_pose_sub_;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr filtered_height_band_sub_;
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr parameter_update_sub_;
     
     // ROS2 Publishers
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr trajectory_pub_;
@@ -175,6 +177,7 @@ private:
     void areaCallback(const geometry_msgs::msg::PolygonStamped::SharedPtr msg);
     void startPoseCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
     void filteredHeightBandCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
+    void parameterUpdateCallback(const std_msgs::msg::String::SharedPtr msg);
     
     void startExplorationCallback(
         const std::shared_ptr<std_srvs::srv::Empty::Request> request,
@@ -214,6 +217,7 @@ private:
     
     // 2D Ray casting for occupancy mapping
     std::vector<std::pair<int, int>> raycast2D(int x0, int y0, int x1, int y1);
+    void addTreeToOccupancyGrid(nav_msgs::msg::OccupancyGrid& occupancy_grid, const TreeCluster& tree, double resolution);
     void addRowToOccupancyGrid(nav_msgs::msg::OccupancyGrid& occupancy_grid, const TreeRow& row, double resolution);
     
     // Distance calculation utilities

@@ -11,6 +11,25 @@
 #include <limits>
 #include <cmath>
 #include <algorithm>
+#include <map>
+
+// Tree structures for orchard exploration
+struct TreeCluster {
+    geometry_msgs::msg::Point center;
+    double radius;
+    double height;
+    int point_count;
+};
+
+struct TreeRow {
+    std::vector<TreeCluster> trees;
+    geometry_msgs::msg::Point start_point;
+    geometry_msgs::msg::Point end_point;
+    double orientation; // in radians
+    double length;
+    double width;
+    int tree_count;
+};
 
 class GvdTopologyNode : public rclcpp::Node {
 public:
@@ -54,6 +73,11 @@ public:
     sub_waypoints_ = create_subscription<geometry_msgs::msg::PoseArray>(
         "/gvd/waypoints", 10,
         std::bind(&GvdTopologyNode::waypointsCallback, this, std::placeholders::_1));
+    
+    // Tree rows subscriber
+    sub_tree_rows_ = create_subscription<visualization_msgs::msg::MarkerArray>(
+        "/orbit_planner/tree_rows", 10,
+        std::bind(&GvdTopologyNode::treeRowsCallback, this, std::placeholders::_1));
 
     // Publishers
     pub_path_ = create_publisher<nav_msgs::msg::Path>(ns_ + "/path", 10);
@@ -72,6 +96,7 @@ private:
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_goal_rviz1_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_goal_rviz2_;
   rclcpp::Subscription<geometry_msgs::msg::PoseArray>::SharedPtr sub_waypoints_;
+  rclcpp::Subscription<visualization_msgs::msg::MarkerArray>::SharedPtr sub_tree_rows_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pub_path_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_markers_;
   rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr pub_gvd_grid_;
@@ -105,6 +130,22 @@ private:
   std::vector<geometry_msgs::msg::Point> waypoints_;
   bool waypoints_defined_ = false;
   
+  // Tree rows state
+  std::vector<TreeRow> tree_rows_;
+  bool tree_rows_defined_ = false;
+  double tree_row_expansion_distance_ = 2.0; // meters to expand tree rows
+  
+  // GVD intersection points for visualization
+  std::vector<geometry_msgs::msg::Point> gvd_intersections_;
+  std::vector<int> gvd_intersection_visit_order_; // Track visit order for each intersection
+  std::vector<std::string> gvd_intersection_types_; // Track type of each intersection (start_left, start_right, end_left, end_right)
+  
+  // Perpendicular lines for visualization
+  std::vector<geometry_msgs::msg::Point> perpendicular_lines_start_left_;
+  std::vector<geometry_msgs::msg::Point> perpendicular_lines_start_right_;
+  std::vector<geometry_msgs::msg::Point> perpendicular_lines_end_left_;
+  std::vector<geometry_msgs::msg::Point> perpendicular_lines_end_right_;
+  
   // Path visualization
   std::vector<int> used_gvd_nodes_;
 
@@ -131,6 +172,109 @@ private:
     // Plan waypoint tour if we have a map
     if (width_ > 0 && height_ > 0) {
       planWaypointTour(msg->header);
+    }
+  }
+  
+  void treeRowsCallback(const visualization_msgs::msg::MarkerArray::SharedPtr msg) {
+    tree_rows_.clear();
+    
+    RCLCPP_INFO(this->get_logger(), "Received MarkerArray with %zu markers", msg->markers.size());
+    
+    // Parse tree row markers from MarkerArray
+    // Based on orbit_planner_node.cpp publishTreeRowsVisualization function
+    std::map<int, TreeRow> row_map; // Map row index to TreeRow
+    
+    for (const auto& marker : msg->markers) {
+      RCLCPP_DEBUG(this->get_logger(), "Processing marker: ns=%s, type=%d, id=%d, points=%zu", 
+                   marker.ns.c_str(), marker.type, marker.id, marker.points.size());
+      
+      // Parse tree row line markers (LINE_STRIP type)
+      if (marker.ns == "tree_rows" && marker.type == visualization_msgs::msg::Marker::LINE_STRIP) {
+        int row_id = marker.id / 2; // Even IDs for lines
+        
+        if (marker.points.size() >= 2) {
+          TreeRow row;
+          row.start_point = marker.points[0];
+          row.end_point = marker.points[1];
+          
+          // Calculate orientation and length
+          double dx = row.end_point.x - row.start_point.x;
+          double dy = row.end_point.y - row.start_point.y;
+          row.orientation = std::atan2(dy, dx);
+          row.length = std::hypot(dx, dy);
+          
+          // Initialize other properties
+          row.tree_count = 0;
+          row.width = 0.0;
+          
+          row_map[row_id] = row;
+          RCLCPP_INFO(this->get_logger(), "Found tree row %d: start(%.2f,%.2f) end(%.2f,%.2f), length=%.2f m", 
+                      row_id, row.start_point.x, row.start_point.y, row.end_point.x, row.end_point.y, row.length);
+        }
+      }
+      
+      // Parse individual tree markers (CYLINDER type for trunks)
+      else if (marker.ns == "row_trees" && marker.type == visualization_msgs::msg::Marker::CYLINDER) {
+        int row_id = marker.id / 1000; // Extract row ID from marker ID
+        int tree_id = (marker.id % 1000) / 2; // Extract tree ID within row
+        
+        if (row_map.find(row_id) != row_map.end()) {
+          TreeCluster tree;
+          tree.center.x = marker.pose.position.x;
+          tree.center.y = marker.pose.position.y;
+          tree.center.z = marker.pose.position.z - 0.25; // Adjust for cylinder center
+          tree.radius = marker.scale.x / 2.0; // Half of scale.x
+          tree.height = marker.scale.z;
+          tree.point_count = 1;
+          
+          // Ensure we have enough space in the trees vector
+          if (row_map[row_id].trees.size() <= static_cast<size_t>(tree_id)) {
+            row_map[row_id].trees.resize(tree_id + 1);
+          }
+          row_map[row_id].trees[tree_id] = tree;
+        }
+      }
+    }
+    
+    // Convert map to vector and add all rows (we only need start/end points and orientation)
+    for (auto& [row_id, row] : row_map) {
+      // Set a default tree count (we don't need exact count for GVD planning)
+      row.tree_count = 10; // Default value for visualization
+      
+      // Add all rows that have valid start and end points
+      if (row.length > 0.1) { // Only add rows with reasonable length
+        tree_rows_.push_back(row);
+      }
+    }
+    
+    tree_rows_defined_ = true;
+    RCLCPP_INFO(this->get_logger(), "Tree rows processed: %zu rows", tree_rows_.size());
+    
+    // Log details for each row
+    for (size_t i = 0; i < tree_rows_.size(); ++i) {
+      const auto& row = tree_rows_[i];
+      RCLCPP_INFO(this->get_logger(), "Row %zu: %d trees, start(%.2f,%.2f) end(%.2f,%.2f), orientation=%.3f rad, length=%.2f m", 
+                  i+1, row.tree_count, 
+                  row.start_point.x, row.start_point.y,
+                  row.end_point.x, row.end_point.y,
+                  row.orientation, row.length);
+    }
+    
+    // Plan orchard exploration if we have a map and tree rows
+    if (width_ > 0 && height_ > 0 && !tree_rows_.empty()) {
+      RCLCPP_INFO(this->get_logger(), "Starting orchard exploration planning...");
+      // Create a header for the exploration
+      std_msgs::msg::Header header;
+      header.stamp = this->now();
+      header.frame_id = "map";
+      planOrchardExploration(header);
+    } else {
+      if (width_ == 0 || height_ == 0) {
+        RCLCPP_WARN(this->get_logger(), "Map not available for orchard exploration (width=%d, height=%d)", width_, height_);
+      }
+      if (tree_rows_.empty()) {
+        RCLCPP_WARN(this->get_logger(), "No tree rows available for orchard exploration");
+      }
     }
   }
 
@@ -480,6 +624,33 @@ private:
               debug_connections++;
             }
             
+            // Check if this edge crosses any tree row
+            double start_x = origin_x_ + x * resolution_;
+            double start_y = origin_y_ + y * resolution_;
+            double end_x = origin_x_ + nx * resolution_;
+            double end_y = origin_y_ + ny * resolution_;
+            
+            bool crosses_tree_row = false;
+            if (tree_rows_defined_ && !tree_rows_.empty()) {
+              for (const auto& row : tree_rows_) {
+                if (lineSegmentsIntersect(start_x, start_y, end_x, end_y,
+                                         row.start_point.x, row.start_point.y,
+                                         row.end_point.x, row.end_point.y)) {
+                  crosses_tree_row = true;
+                  break;
+                }
+              }
+            }
+            
+            // Skip this connection if it crosses a tree row
+            if (crosses_tree_row) {
+              if (i < 1) {
+                RCLCPP_INFO(this->get_logger(), "  ✗ Blocked: node %d -> node %d (crosses tree row)", 
+                           i, neighbor_node);
+              }
+              continue;
+            }
+            
             // Avoid duplicate connections
             bool already_connected = false;
             for (int existing_neighbor : edges_[i]) {
@@ -720,6 +891,31 @@ private:
     int mx = static_cast<int>((wx - origin_x_) / resolution_);
     int my = static_cast<int>((wy - origin_y_) / resolution_);
     return my * width_ + mx;
+  }
+
+  // Check if two line segments intersect
+  bool lineSegmentsIntersect(double x1, double y1, double x2, double y2,
+                            double x3, double y3, double x4, double y4) const {
+    // Calculate the direction vectors
+    double dx1 = x2 - x1;
+    double dy1 = y2 - y1;
+    double dx2 = x4 - x3;
+    double dy2 = y4 - y3;
+    
+    // Calculate the cross product
+    double cross = dx1 * dy2 - dy1 * dx2;
+    
+    // If cross product is zero, lines are parallel
+    if (std::abs(cross) < 1e-10) {
+      return false;
+    }
+    
+    // Calculate the intersection point parameters
+    double t1 = ((x3 - x1) * dy2 - (y3 - y1) * dx2) / cross;
+    double t2 = ((x3 - x1) * dy1 - (y3 - y1) * dx1) / cross;
+    
+    // Check if intersection point is within both line segments
+    return (t1 >= 0.0 && t1 <= 1.0 && t2 >= 0.0 && t2 <= 1.0);
   }
 
   int findNearestNode(int idx) const {
@@ -984,6 +1180,202 @@ private:
       ma.markers.push_back(used_nodes);
     }
 
+    // GVD Intersection Points - create separate markers for each type
+    if (!gvd_intersections_.empty()) {
+      // Create markers for each intersection type with different colors
+      std::map<std::string, std::vector<size_t>> type_indices;
+      for (size_t i = 0; i < gvd_intersections_.size(); ++i) {
+        type_indices[gvd_intersection_types_[i]].push_back(i);
+      }
+      
+      int marker_id = 2;
+      for (const auto& [type, indices] : type_indices) {
+        visualization_msgs::msg::Marker intersection_marker;
+        intersection_marker.header = h;
+        intersection_marker.ns = ns_ + "_gvd_intersections_" + type;
+        intersection_marker.id = marker_id++;
+        intersection_marker.type = visualization_msgs::msg::Marker::SPHERE_LIST;
+        intersection_marker.action = visualization_msgs::msg::Marker::ADD;
+        intersection_marker.scale.x = 0.3; // Large spheres
+        intersection_marker.scale.y = 0.3;
+        intersection_marker.scale.z = 0.3;
+        
+        // Set color based on type
+        if (type == "start_left") {
+          intersection_marker.color.r = 1.0f; // Red
+          intersection_marker.color.g = 0.0f;
+          intersection_marker.color.b = 0.0f;
+        } else if (type == "start_right") {
+          intersection_marker.color.r = 0.0f;
+          intersection_marker.color.g = 1.0f; // Green
+          intersection_marker.color.b = 0.0f;
+        } else if (type == "end_left") {
+          intersection_marker.color.r = 0.0f;
+          intersection_marker.color.g = 0.0f;
+          intersection_marker.color.b = 1.0f; // Blue
+        } else if (type == "end_right") {
+          intersection_marker.color.r = 1.0f; // Magenta
+          intersection_marker.color.g = 0.0f;
+          intersection_marker.color.b = 1.0f;
+        } else {
+          intersection_marker.color.r = 0.5f; // Gray for unknown
+          intersection_marker.color.g = 0.5f;
+          intersection_marker.color.b = 0.5f;
+        }
+        intersection_marker.color.a = 0.9f; // Semi-transparent
+        
+        for (size_t idx : indices) {
+          geometry_msgs::msg::Point p;
+          p.x = gvd_intersections_[idx].x;
+          p.y = gvd_intersections_[idx].y;
+          p.z = gvd_intersections_[idx].z;
+          intersection_marker.points.push_back(p);
+        }
+        ma.markers.push_back(intersection_marker);
+      }
+      
+      // Add numbered text labels for each intersection showing visit order
+      for (size_t i = 0; i < gvd_intersections_.size(); ++i) {
+        visualization_msgs::msg::Marker number_marker;
+        number_marker.header = h;
+        number_marker.ns = ns_ + "_intersection_numbers";
+        number_marker.id = 10 + static_cast<int>(i); // Start from ID 10
+        number_marker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+        number_marker.action = visualization_msgs::msg::Marker::ADD;
+        number_marker.pose.position.x = gvd_intersections_[i].x;
+        number_marker.pose.position.y = gvd_intersections_[i].y;
+        number_marker.pose.position.z = gvd_intersections_[i].z + 0.5; // Above the sphere
+        number_marker.pose.orientation.w = 1.0;
+        number_marker.scale.z = 0.4; // Text size
+        number_marker.color.r = 1.0f;
+        number_marker.color.g = 1.0f;
+        number_marker.color.b = 0.0f; // Yellow text
+        number_marker.color.a = 1.0f;
+        number_marker.text = std::to_string(gvd_intersection_visit_order_[i]);
+        ma.markers.push_back(number_marker);
+      }
+      
+      // Add legend for intersection types
+      visualization_msgs::msg::Marker legend_marker;
+      legend_marker.header = h;
+      legend_marker.ns = ns_ + "_intersection_legend";
+      legend_marker.id = 100;
+      legend_marker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+      legend_marker.action = visualization_msgs::msg::Marker::ADD;
+      legend_marker.pose.position.x = 0.0;
+      legend_marker.pose.position.y = 0.0;
+      legend_marker.pose.position.z = 2.5; // Above the map
+      legend_marker.pose.orientation.w = 1.0;
+      legend_marker.scale.z = 0.4; // Text size
+      legend_marker.color.r = 1.0f;
+      legend_marker.color.g = 1.0f;
+      legend_marker.color.b = 1.0f;
+      legend_marker.color.a = 1.0f;
+      legend_marker.text = "Legend: Red=Start_Left, Green=Start_Right, Blue=End_Left, Magenta=End_Right";
+      ma.markers.push_back(legend_marker);
+      
+      // Add summary text for intersection count and visit order
+      visualization_msgs::msg::Marker text_marker;
+      text_marker.header = h;
+      text_marker.ns = ns_ + "_intersection_text";
+      text_marker.id = 3;
+      text_marker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+      text_marker.action = visualization_msgs::msg::Marker::ADD;
+      text_marker.pose.position.x = 0.0;
+      text_marker.pose.position.y = 0.0;
+      text_marker.pose.position.z = 2.0; // Above the map
+      text_marker.pose.orientation.w = 1.0;
+      text_marker.scale.z = 0.5; // Text size
+      text_marker.color.r = 1.0f;
+      text_marker.color.g = 1.0f;
+      text_marker.color.b = 1.0f;
+      text_marker.color.a = 1.0f;
+      text_marker.text = "GVD Intersections: " + std::to_string(gvd_intersections_.size()) + " (Numbers show visit order)";
+      ma.markers.push_back(text_marker);
+    }
+    
+    // Add perpendicular lines visualization
+    if (!perpendicular_lines_start_left_.empty()) {
+      // Start left perpendicular lines
+      visualization_msgs::msg::Marker start_left_lines;
+      start_left_lines.header = h;
+      start_left_lines.ns = ns_ + "_perpendicular_start_left";
+      start_left_lines.id = 200;
+      start_left_lines.type = visualization_msgs::msg::Marker::LINE_LIST;
+      start_left_lines.action = visualization_msgs::msg::Marker::ADD;
+      start_left_lines.scale.x = 0.05; // Line width
+      start_left_lines.color.r = 1.0f; // Red
+      start_left_lines.color.g = 0.0f;
+      start_left_lines.color.b = 0.0f;
+      start_left_lines.color.a = 0.7f; // Semi-transparent
+      start_left_lines.points = perpendicular_lines_start_left_;
+      ma.markers.push_back(start_left_lines);
+      
+      // Start right perpendicular lines
+      visualization_msgs::msg::Marker start_right_lines;
+      start_right_lines.header = h;
+      start_right_lines.ns = ns_ + "_perpendicular_start_right";
+      start_right_lines.id = 201;
+      start_right_lines.type = visualization_msgs::msg::Marker::LINE_LIST;
+      start_right_lines.action = visualization_msgs::msg::Marker::ADD;
+      start_right_lines.scale.x = 0.05; // Line width
+      start_right_lines.color.r = 0.0f;
+      start_right_lines.color.g = 1.0f; // Green
+      start_right_lines.color.b = 0.0f;
+      start_right_lines.color.a = 0.7f; // Semi-transparent
+      start_right_lines.points = perpendicular_lines_start_right_;
+      ma.markers.push_back(start_right_lines);
+      
+      // End left perpendicular lines
+      visualization_msgs::msg::Marker end_left_lines;
+      end_left_lines.header = h;
+      end_left_lines.ns = ns_ + "_perpendicular_end_left";
+      end_left_lines.id = 202;
+      end_left_lines.type = visualization_msgs::msg::Marker::LINE_LIST;
+      end_left_lines.action = visualization_msgs::msg::Marker::ADD;
+      end_left_lines.scale.x = 0.05; // Line width
+      end_left_lines.color.r = 0.0f;
+      end_left_lines.color.g = 0.0f;
+      end_left_lines.color.b = 1.0f; // Blue
+      end_left_lines.color.a = 0.7f; // Semi-transparent
+      end_left_lines.points = perpendicular_lines_end_left_;
+      ma.markers.push_back(end_left_lines);
+      
+      // End right perpendicular lines
+      visualization_msgs::msg::Marker end_right_lines;
+      end_right_lines.header = h;
+      end_right_lines.ns = ns_ + "_perpendicular_end_right";
+      end_right_lines.id = 203;
+      end_right_lines.type = visualization_msgs::msg::Marker::LINE_LIST;
+      end_right_lines.action = visualization_msgs::msg::Marker::ADD;
+      end_right_lines.scale.x = 0.05; // Line width
+      end_right_lines.color.r = 1.0f; // Magenta
+      end_right_lines.color.g = 0.0f;
+      end_right_lines.color.b = 1.0f;
+      end_right_lines.color.a = 0.7f; // Semi-transparent
+      end_right_lines.points = perpendicular_lines_end_right_;
+      ma.markers.push_back(end_right_lines);
+      
+      // Add perpendicular lines legend
+      visualization_msgs::msg::Marker perp_legend_marker;
+      perp_legend_marker.header = h;
+      perp_legend_marker.ns = ns_ + "_perpendicular_legend";
+      perp_legend_marker.id = 204;
+      perp_legend_marker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+      perp_legend_marker.action = visualization_msgs::msg::Marker::ADD;
+      perp_legend_marker.pose.position.x = 0.0;
+      perp_legend_marker.pose.position.y = 0.0;
+      perp_legend_marker.pose.position.z = 3.0; // Above the map
+      perp_legend_marker.pose.orientation.w = 1.0;
+      perp_legend_marker.scale.z = 0.4; // Text size
+      perp_legend_marker.color.r = 1.0f;
+      perp_legend_marker.color.g = 1.0f;
+      perp_legend_marker.color.b = 1.0f;
+      perp_legend_marker.color.a = 1.0f;
+      perp_legend_marker.text = "Perpendicular Lines: Red=Start_Left, Green=Start_Right, Blue=End_Left, Magenta=End_Right";
+      ma.markers.push_back(perp_legend_marker);
+    }
+
     // Edges
     visualization_msgs::msg::Marker edges;
     edges.header = h;
@@ -1129,6 +1521,310 @@ private:
                 pts.size(), pts[0].first, pts[0].second, pts.back().first, pts.back().second);
     
     pub_waypoint_path_->publish(path);
+  }
+  
+  // Find intersection points between perpendicular lines from tree row endpoints and GVD edges
+  std::vector<std::pair<geometry_msgs::msg::Point, std::string>> findTreeRowGVDIntersections(const TreeRow& row) {
+    std::vector<std::pair<geometry_msgs::msg::Point, std::string>> intersections;
+    
+    // Calculate row direction (PCA direction)
+    double row_dx = std::cos(row.orientation);
+    double row_dy = std::sin(row.orientation);
+    
+    // Calculate perpendicular direction (90 degrees rotated)
+    double perp_dx = -row_dy; // Perpendicular to row direction
+    double perp_dy = row_dx;
+    
+    // Extension distance for perpendicular lines
+    double extension_distance = 5.0; // Extend 10 meters in each perpendicular direction
+    double min_distance_from_endpoints = 1.0; // Minimum distance from start/end points
+    
+    // 1. Perpendicular line from start point (left and right)
+    geometry_msgs::msg::Point start_left;
+    start_left.x = row.start_point.x + perp_dx * extension_distance;
+    start_left.y = row.start_point.y + perp_dy * extension_distance;
+    start_left.z = row.start_point.z;
+    
+    geometry_msgs::msg::Point start_right;
+    start_right.x = row.start_point.x - perp_dx * extension_distance;
+    start_right.y = row.start_point.y - perp_dy * extension_distance;
+    start_right.z = row.start_point.z;
+    
+    // 2. Perpendicular line from end point (left and right)
+    geometry_msgs::msg::Point end_left;
+    end_left.x = row.end_point.x + perp_dx * extension_distance;
+    end_left.y = row.end_point.y + perp_dy * extension_distance;
+    end_left.z = row.end_point.z;
+    
+    geometry_msgs::msg::Point end_right;
+    end_right.x = row.end_point.x - perp_dx * extension_distance;
+    end_right.y = row.end_point.y - perp_dy * extension_distance;
+    end_right.z = row.end_point.z;
+    
+    RCLCPP_INFO(this->get_logger(), "Tree row orientation: %.3f rad (%.1f deg), perpendicular: %.3f rad (%.1f deg)", 
+                row.orientation, row.orientation * 180.0 / M_PI, 
+                std::atan2(perp_dy, perp_dx), std::atan2(perp_dy, perp_dx) * 180.0 / M_PI);
+    
+    RCLCPP_INFO(this->get_logger(), "Tree row start: (%.3f, %.3f), end: (%.3f, %.3f)", 
+                row.start_point.x, row.start_point.y, row.end_point.x, row.end_point.y);
+    
+    RCLCPP_INFO(this->get_logger(), "Perpendicular line endpoints:");
+    RCLCPP_INFO(this->get_logger(), "  Start left: (%.3f, %.3f) -> (%.3f, %.3f)", 
+                row.start_point.x, row.start_point.y, start_left.x, start_left.y);
+    RCLCPP_INFO(this->get_logger(), "  Start right: (%.3f, %.3f) -> (%.3f, %.3f)", 
+                row.start_point.x, row.start_point.y, start_right.x, start_right.y);
+    RCLCPP_INFO(this->get_logger(), "  End left: (%.3f, %.3f) -> (%.3f, %.3f)", 
+                row.end_point.x, row.end_point.y, end_left.x, end_left.y);
+    RCLCPP_INFO(this->get_logger(), "  End right: (%.3f, %.3f) -> (%.3f, %.3f)", 
+                row.end_point.x, row.end_point.y, end_right.x, end_right.y);
+    
+    // Find intersections for each perpendicular line
+    std::vector<geometry_msgs::msg::Point> start_left_intersections = findLineGVDIntersections(row.start_point, start_left);
+    std::vector<geometry_msgs::msg::Point> start_right_intersections = findLineGVDIntersections(row.start_point, start_right);
+    std::vector<geometry_msgs::msg::Point> end_left_intersections = findLineGVDIntersections(row.end_point, end_left);
+    std::vector<geometry_msgs::msg::Point> end_right_intersections = findLineGVDIntersections(row.end_point, end_right);
+    
+    // Find the first valid intersection for each perpendicular line
+    geometry_msgs::msg::Point start_left_intersection = findFirstIntersectionAfterDistance(
+        start_left_intersections, row.start_point, min_distance_from_endpoints, 1.0);
+    geometry_msgs::msg::Point start_right_intersection = findFirstIntersectionAfterDistance(
+        start_right_intersections, row.start_point, min_distance_from_endpoints, 1.0);
+    geometry_msgs::msg::Point end_left_intersection = findFirstIntersectionAfterDistance(
+        end_left_intersections, row.end_point, min_distance_from_endpoints, 1.0);
+    geometry_msgs::msg::Point end_right_intersection = findFirstIntersectionAfterDistance(
+        end_right_intersections, row.end_point, min_distance_from_endpoints, 1.0);
+    
+    // Store perpendicular lines for visualization
+    perpendicular_lines_start_left_.push_back(row.start_point);
+    perpendicular_lines_start_left_.push_back(start_left);
+    
+    perpendicular_lines_start_right_.push_back(row.start_point);
+    perpendicular_lines_start_right_.push_back(start_right);
+    
+    perpendicular_lines_end_left_.push_back(row.end_point);
+    perpendicular_lines_end_left_.push_back(end_left);
+    
+    perpendicular_lines_end_right_.push_back(row.end_point);
+    perpendicular_lines_end_right_.push_back(end_right);
+    
+    // Add valid intersections with their types
+    if (start_left_intersection.x != 0.0 || start_left_intersection.y != 0.0) {
+      intersections.push_back({start_left_intersection, "start_left"});
+      RCLCPP_INFO(this->get_logger(), "Start left intersection: (%.3f, %.3f)", 
+                  start_left_intersection.x, start_left_intersection.y);
+    }
+    
+    if (start_right_intersection.x != 0.0 || start_right_intersection.y != 0.0) {
+      intersections.push_back({start_right_intersection, "start_right"});
+      RCLCPP_INFO(this->get_logger(), "Start right intersection: (%.3f, %.3f)", 
+                  start_right_intersection.x, start_right_intersection.y);
+    }
+    
+    if (end_left_intersection.x != 0.0 || end_left_intersection.y != 0.0) {
+      intersections.push_back({end_left_intersection, "end_left"});
+      RCLCPP_INFO(this->get_logger(), "End left intersection: (%.3f, %.3f)", 
+                  end_left_intersection.x, end_left_intersection.y);
+    }
+    
+    if (end_right_intersection.x != 0.0 || end_right_intersection.y != 0.0) {
+      intersections.push_back({end_right_intersection, "end_right"});
+      RCLCPP_INFO(this->get_logger(), "End right intersection: (%.3f, %.3f)", 
+                  end_right_intersection.x, end_right_intersection.y);
+    }
+    
+    RCLCPP_INFO(this->get_logger(), "Found %zu intersections for tree row (start_left: %s, start_right: %s, end_left: %s, end_right: %s)", 
+                intersections.size(),
+                (start_left_intersection.x != 0.0 || start_left_intersection.y != 0.0) ? "yes" : "no",
+                (start_right_intersection.x != 0.0 || start_right_intersection.y != 0.0) ? "yes" : "no",
+                (end_left_intersection.x != 0.0 || end_left_intersection.y != 0.0) ? "yes" : "no",
+                (end_right_intersection.x != 0.0 || end_right_intersection.y != 0.0) ? "yes" : "no");
+    
+    return intersections;
+  }
+  
+  // Find the first intersection after a minimum distance from the reference point
+  geometry_msgs::msg::Point findFirstIntersectionAfterDistance(
+      const std::vector<geometry_msgs::msg::Point>& intersections,
+      const geometry_msgs::msg::Point& reference_point,
+      double min_distance,
+      double /* direction */) {
+    
+    geometry_msgs::msg::Point result; // Default (0,0,0) means no intersection found
+    
+    for (const auto& intersection : intersections) {
+      double distance = std::hypot(intersection.x - reference_point.x, intersection.y - reference_point.y);
+      
+      // Check if intersection is at least min_distance away from reference point
+      if (distance >= min_distance) {
+        // For backward direction (-1.0), we want the closest intersection that's far enough
+        // For forward direction (1.0), we want the closest intersection that's far enough
+        if (result.x == 0.0 && result.y == 0.0) {
+          result = intersection; // First valid intersection
+        } else {
+          // Keep the closest valid intersection
+          double current_distance = std::hypot(result.x - reference_point.x, result.y - reference_point.y);
+          if (distance < current_distance) {
+            result = intersection;
+          }
+        }
+      }
+    }
+    
+    return result;
+  }
+  
+  // Find GVD intersections along a line segment
+  std::vector<geometry_msgs::msg::Point> findLineGVDIntersections(const geometry_msgs::msg::Point& start, const geometry_msgs::msg::Point& end) {
+    std::vector<geometry_msgs::msg::Point> intersections;
+    
+    // Sample points along the line segment
+    int num_samples = static_cast<int>(std::ceil(std::hypot(end.x - start.x, end.y - start.y) / 0.05)); // Sample every 0.2m
+    num_samples = std::max(10, num_samples); // At least 10 samples
+    
+    for (int i = 0; i <= num_samples; ++i) {
+      double t = static_cast<double>(i) / num_samples;
+      geometry_msgs::msg::Point sample_point;
+      sample_point.x = start.x + t * (end.x - start.x);
+      sample_point.y = start.y + t * (end.y - start.y);
+      sample_point.z = start.z + t * (end.z - start.z);
+      
+      // Find nearest GVD node
+      int point_idx = worldToIndex(sample_point.x, sample_point.y);
+      int nearest_gvd_node = findNearestNode(point_idx);
+      
+      if (nearest_gvd_node >= 0 && nearest_gvd_node < static_cast<int>(voro_inds_.size())) {
+        // Get the GVD node position
+        int gvd_idx = voro_inds_[nearest_gvd_node];
+        double gvd_x = origin_x_ + (gvd_idx % width_) * resolution_;
+        double gvd_y = origin_y_ + (gvd_idx / width_) * resolution_;
+        
+        // Check if this GVD node is close enough to be considered an intersection
+        double distance = std::hypot(sample_point.x - gvd_x, sample_point.y - gvd_y);
+        if (distance < 0.3) { // Within 1 meter of the line
+          geometry_msgs::msg::Point intersection;
+          intersection.x = gvd_x;
+          intersection.y = gvd_y;
+          intersection.z = sample_point.z;
+          intersections.push_back(intersection);
+        }
+      }
+    }
+    
+    return intersections;
+  }
+  
+  
+  // Plan orchard exploration using tree rows
+  void planOrchardExploration(const std_msgs::msg::Header& header) {
+    if (tree_rows_.empty()) {
+      RCLCPP_WARN(this->get_logger(), "No tree rows available for orchard exploration");
+      return;
+    }
+    
+    RCLCPP_INFO(this->get_logger(), "Planning orchard exploration with %zu tree rows", tree_rows_.size());
+    
+    std::vector<std::pair<double, double>> full_exploration_path;
+    used_gvd_nodes_.clear();
+    gvd_intersections_.clear(); // Clear previous intersections
+    gvd_intersection_visit_order_.clear(); // Clear previous visit orders
+    gvd_intersection_types_.clear(); // Clear previous intersection types
+    
+    // Clear previous perpendicular lines
+    perpendicular_lines_start_left_.clear();
+    perpendicular_lines_start_right_.clear();
+    perpendicular_lines_end_left_.clear();
+    perpendicular_lines_end_right_.clear();
+    
+    // Start from map origin (0, 0)
+    full_exploration_path.emplace_back(0.0, 0.0);
+    
+    // Sort tree rows by their Y position (for top-to-bottom exploration)
+    std::vector<TreeRow> sorted_rows = tree_rows_;
+    std::sort(sorted_rows.begin(), sorted_rows.end(), [](const TreeRow& a, const TreeRow& b) {
+      return a.start_point.y > b.start_point.y; // Sort by Y descending (top to bottom)
+    });
+    
+    int current_gvd_node = -1;
+    
+    // Initialize current GVD node from origin
+    int origin_idx = worldToIndex(0.0, 0.0);
+    current_gvd_node = findNearestNode(origin_idx);
+    RCLCPP_INFO(this->get_logger(), "Starting from origin GVD node: %d", current_gvd_node);
+    
+    int global_visit_order = 1; // Global visit order counter
+    
+    // Process each tree row
+    for (size_t i = 0; i < sorted_rows.size(); ++i) {
+      const auto& row = sorted_rows[i];
+      RCLCPP_INFO(this->get_logger(), "Processing tree row %zu: %d trees, orientation: %.3f rad", 
+                  i+1, row.tree_count, row.orientation);
+      
+      // Find GVD intersections for this tree row
+      auto intersections = findTreeRowGVDIntersections(row);
+      RCLCPP_INFO(this->get_logger(), "Found %zu GVD intersections for row %zu", intersections.size(), i+1);
+      
+      if (intersections.empty()) {
+        RCLCPP_WARN(this->get_logger(), "No GVD intersections found for tree row %zu", i+1);
+        continue;
+      }
+      
+      // Sort intersections by X position (left to right)
+      std::sort(intersections.begin(), intersections.end(), [](const std::pair<geometry_msgs::msg::Point, std::string>& a, const std::pair<geometry_msgs::msg::Point, std::string>& b) {
+        return a.first.x < b.first.x;
+      });
+      
+      // Plan path to each intersection in sequence
+      for (size_t j = 0; j < intersections.size(); ++j) {
+        const auto& intersection_pair = intersections[j];
+        const auto& intersection = intersection_pair.first;
+        const auto& intersection_type = intersection_pair.second;
+        
+        RCLCPP_INFO(this->get_logger(), "Planning to intersection %zu (global order %d, type %s): (%.3f, %.3f)", 
+                    j+1, global_visit_order, intersection_type.c_str(), intersection.x, intersection.y);
+        
+        // Add intersection to global list with visit order and type
+        gvd_intersections_.push_back(intersection);
+        gvd_intersection_visit_order_.push_back(global_visit_order);
+        gvd_intersection_types_.push_back(intersection_type);
+        global_visit_order++;
+        
+        int s_node = current_gvd_node;
+        int goal_idx = worldToIndex(intersection.x, intersection.y);
+        int g_node = findNearestNode(goal_idx);
+        
+        if (s_node == g_node) {
+          RCLCPP_WARN(this->get_logger(), "Start and goal nodes are the same for intersection %zu", j+1);
+          current_gvd_node = g_node;
+        } else {
+          auto raw_path = aStar(s_node, g_node);
+          if (raw_path.empty()) {
+            RCLCPP_ERROR(this->get_logger(), "A* path planning failed for intersection %zu!", j+1);
+            current_gvd_node = g_node;
+            continue;
+          }
+          
+          // Add used GVD nodes to visualization list
+          for (int node_id : raw_path) {
+            used_gvd_nodes_.push_back(node_id);
+          }
+          
+          auto smooth_pts = projectAndSmooth(raw_path);
+          
+          // Add GVD path to full exploration (skip first point to avoid duplication)
+          for (size_t k = 1; k < smooth_pts.size(); ++k) {
+            full_exploration_path.push_back(smooth_pts[k]);
+          }
+          
+          // Update current GVD node
+          current_gvd_node = g_node;
+        }
+      }
+    }
+    
+    // Publish the complete orchard exploration path
+    publishWaypointPath(header, full_exploration_path);
+    
+    RCLCPP_INFO(this->get_logger(), "Orchard exploration completed with %zu total points", full_exploration_path.size());
   }
 };
 

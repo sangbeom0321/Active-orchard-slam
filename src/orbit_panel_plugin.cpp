@@ -13,7 +13,20 @@
 #include <QJsonArray>
 #include <QStandardPaths>
 #include <QDir>
+#include <QScrollArea>
+#include <QGroupBox>
+#include <QGridLayout>
+#include <QSpinBox>
+#include <QDoubleSpinBox>
+#include <QCheckBox>
+#include <QListWidget>
+#include <QProgressBar>
+#include <QTabWidget>
 #include <rclcpp/rclcpp.hpp>
+#include <rcl_interfaces/srv/set_parameters.hpp>
+#include <rcl_interfaces/msg/parameter.hpp>
+#include <rcl_interfaces/msg/parameter_value.hpp>
+#include <std_msgs/msg/string.hpp>
 
 namespace orbit_planner {
 
@@ -304,9 +317,45 @@ void OrbitPanelPlugin::onClearPolygon() {
 }
 
 void OrbitPanelPlugin::onParameterChanged() {
-    // Save parameters when changed
+    // Save parameters locally first
     saveParameters();
-    logMessage("Parameters updated");
+    
+    // Create parameter update message
+    std_msgs::msg::String param_msg;
+    std::ostringstream oss;
+    
+    // Format parameters as key=value pairs separated by semicolons
+    oss << "map_update_rate=" << map_update_rate_spin_->value() << ";";
+    oss << "planning_rate=" << planning_rate_spin_->value() << ";";
+    oss << "robot_radius=" << robot_radius_spin_->value() << ";";
+    oss << "safety_margin=" << safety_margin_spin_->value() << ";";
+    oss << "max_planning_distance=" << max_planning_distance_spin_->value() << ";";
+    oss << "frontier_cluster_min_size=" << frontier_cluster_min_size_spin_->value() << ";";
+    oss << "frontier_cluster_max_distance=" << frontier_cluster_max_distance_spin_->value() << ";";
+    oss << "goal_tolerance=" << goal_tolerance_spin_->value() << ";";
+    oss << "yaw_change_weight=" << yaw_change_weight_spin_->value() << ";";
+    oss << "frontier_gain_weight=" << frontier_gain_weight_spin_->value() << ";";
+    oss << "distance_weight=" << distance_weight_spin_->value() << ";";
+    oss << "tree_height_min=" << tree_height_min_spin_->value() << ";";
+    oss << "tree_height_max=" << tree_height_max_spin_->value() << ";";
+    oss << "tree_cluster_tolerance=" << tree_cluster_tolerance_spin_->value() << ";";
+    oss << "tree_min_cluster_size=" << tree_min_cluster_size_spin_->value() << ";";
+    oss << "row_tolerance=" << row_tolerance_spin_->value() << ";";
+    oss << "row_min_length=" << row_min_length_spin_->value() << ";";
+    oss << "row_min_trees=" << row_min_trees_spin_->value() << ";";
+    oss << "center_search_radius=" << center_search_radius_spin_->value() << ";";
+    oss << "clustering_radius=" << clustering_radius_spin_->value() << ";";
+    oss << "min_neighbors_in_radius=" << min_neighbors_in_radius_spin_->value() << ";";
+    oss << "orbit_radius=" << orbit_radius_spin_->value() << ";";
+    oss << "orbit_spacing=" << orbit_spacing_spin_->value() << ";";
+    oss << "path_resolution=" << path_resolution_spin_->value() << ";";
+    oss << "path_smoothing_factor=" << path_smoothing_factor_spin_->value();
+    
+    param_msg.data = oss.str();
+    
+    // Publish parameter update
+    parameter_pub_->publish(param_msg);
+    logMessage("Parameters published to orbit_planner_node");
 }
 
 void OrbitPanelPlugin::onUpdateStatus() {
@@ -323,8 +372,13 @@ void OrbitPanelPlugin::setupUI() {
         main_layout_ = qobject_cast<QVBoxLayout*>(this->layout());
     }
     
+    // Set maximum size for the panel to prevent it from being too large
+    this->setMaximumWidth(500); // Adjust width as needed
+    this->setMaximumHeight(800); // Adjust height as needed
+    
     // Create tab widget
     tab_widget_ = new QTabWidget();
+    tab_widget_->setMaximumHeight(750); // Limit tab widget height
     main_layout_->addWidget(tab_widget_);
     
     // Setup tabs
@@ -338,7 +392,19 @@ void OrbitPanelPlugin::setupControlTab() {
     control_tab_ = new QWidget();
     tab_widget_->addTab(control_tab_, "Control");
     
-    QVBoxLayout* layout = new QVBoxLayout(control_tab_);
+    // Create scroll area for control tab
+    QScrollArea* scroll_area = new QScrollArea();
+    scroll_area->setWidgetResizable(true);
+    scroll_area->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scroll_area->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    
+    QWidget* scroll_widget = new QWidget();
+    QVBoxLayout* layout = new QVBoxLayout(scroll_widget);
+    
+    // Set scroll area as the main widget for control tab
+    QVBoxLayout* tab_layout = new QVBoxLayout(control_tab_);
+    tab_layout->addWidget(scroll_area);
+    scroll_area->setWidget(scroll_widget);
     
     // Start point selection (removed - will use current odometry position)
     
@@ -410,7 +476,19 @@ void OrbitPanelPlugin::setupStatusTab() {
     status_tab_ = new QWidget();
     tab_widget_->addTab(status_tab_, "Status");
     
-    QVBoxLayout* layout = new QVBoxLayout(status_tab_);
+    // Create scroll area for status tab
+    QScrollArea* scroll_area = new QScrollArea();
+    scroll_area->setWidgetResizable(true);
+    scroll_area->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scroll_area->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    
+    QWidget* scroll_widget = new QWidget();
+    QVBoxLayout* layout = new QVBoxLayout(scroll_widget);
+    
+    // Set scroll area as the main widget for status tab
+    QVBoxLayout* tab_layout = new QVBoxLayout(status_tab_);
+    tab_layout->addWidget(scroll_area);
+    scroll_area->setWidget(scroll_widget);
     
     // Status information
     QGroupBox* status_group = new QGroupBox("Status Information");
@@ -479,73 +557,272 @@ void OrbitPanelPlugin::setupParametersTab() {
     parameters_tab_ = new QWidget();
     tab_widget_->addTab(parameters_tab_, "Parameters");
     
-    QVBoxLayout* layout = new QVBoxLayout(parameters_tab_);
+    // Create scroll area for parameters
+    QScrollArea* scroll_area = new QScrollArea();
+    scroll_area->setWidgetResizable(true);
+    scroll_area->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scroll_area->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     
-    QGroupBox* params_group = new QGroupBox("Exploration Parameters");
-    QGridLayout* params_layout = new QGridLayout(params_group);
+    // Set maximum height for scroll area to prevent panel from being too tall
+    scroll_area->setMaximumHeight(600); // Adjust this value as needed
+    scroll_area->setMinimumHeight(400);
+    
+    QWidget* scroll_widget = new QWidget();
+    QVBoxLayout* layout = new QVBoxLayout(scroll_widget);
+    
+    // Set scroll area as the main widget for parameters tab
+    QVBoxLayout* tab_layout = new QVBoxLayout(parameters_tab_);
+    tab_layout->addWidget(scroll_area);
+    scroll_area->setWidget(scroll_widget);
+    
+    // Update rates group
+    QGroupBox* update_rates_group = new QGroupBox("Update Rates");
+    QGridLayout* update_rates_layout = new QGridLayout(update_rates_group);
     
     int row = 0;
+    update_rates_layout->addWidget(new QLabel("Map Update Rate (Hz):"), row, 0);
+    map_update_rate_spin_ = new QDoubleSpinBox();
+    map_update_rate_spin_->setRange(0.1, 10.0);
+    map_update_rate_spin_->setSingleStep(0.1);
+    map_update_rate_spin_->setValue(2.0);
+    update_rates_layout->addWidget(map_update_rate_spin_, row++, 1);
     
-    // Robot parameters
-    params_layout->addWidget(new QLabel("Robot Radius (m):"), row, 0);
+    update_rates_layout->addWidget(new QLabel("Planning Rate (Hz):"), row, 0);
+    planning_rate_spin_ = new QDoubleSpinBox();
+    planning_rate_spin_->setRange(0.1, 10.0);
+    planning_rate_spin_->setSingleStep(0.1);
+    planning_rate_spin_->setValue(1.0);
+    update_rates_layout->addWidget(planning_rate_spin_, row++, 1);
+    
+    layout->addWidget(update_rates_group);
+    
+    // Robot parameters group
+    QGroupBox* robot_group = new QGroupBox("Robot Parameters");
+    QGridLayout* robot_layout = new QGridLayout(robot_group);
+    
+    row = 0;
+    robot_layout->addWidget(new QLabel("Robot Radius (m):"), row, 0);
     robot_radius_spin_ = new QDoubleSpinBox();
     robot_radius_spin_->setRange(0.1, 2.0);
     robot_radius_spin_->setSingleStep(0.1);
-    robot_radius_spin_->setValue(0.5);
-    params_layout->addWidget(robot_radius_spin_, row++, 1);
+    robot_radius_spin_->setValue(0.4);
+    robot_layout->addWidget(robot_radius_spin_, row++, 1);
     
-    params_layout->addWidget(new QLabel("Safety Margin (m):"), row, 0);
+    robot_layout->addWidget(new QLabel("Safety Margin (m):"), row, 0);
     safety_margin_spin_ = new QDoubleSpinBox();
     safety_margin_spin_->setRange(0.0, 1.0);
     safety_margin_spin_->setSingleStep(0.1);
-    safety_margin_spin_->setValue(0.2);
-    params_layout->addWidget(safety_margin_spin_, row++, 1);
+    safety_margin_spin_->setValue(0.1);
+    robot_layout->addWidget(safety_margin_spin_, row++, 1);
     
-    params_layout->addWidget(new QLabel("Max Planning Distance (m):"), row, 0);
+    layout->addWidget(robot_group);
+    
+    // Exploration parameters group
+    QGroupBox* exploration_group = new QGroupBox("Exploration Parameters");
+    QGridLayout* exploration_layout = new QGridLayout(exploration_group);
+    
+    row = 0;
+    exploration_layout->addWidget(new QLabel("Max Planning Distance (m):"), row, 0);
     max_planning_distance_spin_ = new QDoubleSpinBox();
-    max_planning_distance_spin_->setRange(1.0, 50.0);
+    max_planning_distance_spin_->setRange(1.0, 100.0);
     max_planning_distance_spin_->setSingleStep(1.0);
-    max_planning_distance_spin_->setValue(10.0);
-    params_layout->addWidget(max_planning_distance_spin_, row++, 1);
+    max_planning_distance_spin_->setValue(50.0);
+    exploration_layout->addWidget(max_planning_distance_spin_, row++, 1);
     
-    // Frontier parameters
-    params_layout->addWidget(new QLabel("Frontier Cluster Min Size:"), row, 0);
+    exploration_layout->addWidget(new QLabel("Frontier Cluster Min Size:"), row, 0);
     frontier_cluster_min_size_spin_ = new QDoubleSpinBox();
     frontier_cluster_min_size_spin_->setRange(1, 100);
     frontier_cluster_min_size_spin_->setSingleStep(1);
-    frontier_cluster_min_size_spin_->setValue(5);
-    params_layout->addWidget(frontier_cluster_min_size_spin_, row++, 1);
+    frontier_cluster_min_size_spin_->setValue(5.0);
+    exploration_layout->addWidget(frontier_cluster_min_size_spin_, row++, 1);
     
-    params_layout->addWidget(new QLabel("Yaw Change Weight:"), row, 0);
+    exploration_layout->addWidget(new QLabel("Frontier Cluster Max Distance (m):"), row, 0);
+    frontier_cluster_max_distance_spin_ = new QDoubleSpinBox();
+    frontier_cluster_max_distance_spin_->setRange(1.0, 50.0);
+    frontier_cluster_max_distance_spin_->setSingleStep(1.0);
+    frontier_cluster_max_distance_spin_->setValue(10.0);
+    exploration_layout->addWidget(frontier_cluster_max_distance_spin_, row++, 1);
+    
+    exploration_layout->addWidget(new QLabel("Goal Tolerance (m):"), row, 0);
+    goal_tolerance_spin_ = new QDoubleSpinBox();
+    goal_tolerance_spin_->setRange(0.1, 5.0);
+    goal_tolerance_spin_->setSingleStep(0.1);
+    goal_tolerance_spin_->setValue(1.0);
+    exploration_layout->addWidget(goal_tolerance_spin_, row++, 1);
+    
+    layout->addWidget(exploration_group);
+    
+    // Cost weights group
+    QGroupBox* cost_weights_group = new QGroupBox("Cost Weights");
+    QGridLayout* cost_weights_layout = new QGridLayout(cost_weights_group);
+    
+    row = 0;
+    cost_weights_layout->addWidget(new QLabel("Yaw Change Weight:"), row, 0);
     yaw_change_weight_spin_ = new QDoubleSpinBox();
     yaw_change_weight_spin_->setRange(0.0, 10.0);
     yaw_change_weight_spin_->setSingleStep(0.1);
-    yaw_change_weight_spin_->setValue(1.0);
-    params_layout->addWidget(yaw_change_weight_spin_, row++, 1);
+    yaw_change_weight_spin_->setValue(0.5);
+    cost_weights_layout->addWidget(yaw_change_weight_spin_, row++, 1);
     
-    params_layout->addWidget(new QLabel("Frontier Gain Weight:"), row, 0);
+    cost_weights_layout->addWidget(new QLabel("Frontier Gain Weight:"), row, 0);
     frontier_gain_weight_spin_ = new QDoubleSpinBox();
     frontier_gain_weight_spin_->setRange(0.0, 10.0);
     frontier_gain_weight_spin_->setSingleStep(0.1);
     frontier_gain_weight_spin_->setValue(1.0);
-    params_layout->addWidget(frontier_gain_weight_spin_, row++, 1);
+    cost_weights_layout->addWidget(frontier_gain_weight_spin_, row++, 1);
     
-    // Orbit parameters
-    params_layout->addWidget(new QLabel("Orbit Radius (m):"), row, 0);
+    cost_weights_layout->addWidget(new QLabel("Distance Weight:"), row, 0);
+    distance_weight_spin_ = new QDoubleSpinBox();
+    distance_weight_spin_->setRange(0.0, 10.0);
+    distance_weight_spin_->setSingleStep(0.1);
+    distance_weight_spin_->setValue(1.0);
+    cost_weights_layout->addWidget(distance_weight_spin_, row++, 1);
+    
+    layout->addWidget(cost_weights_group);
+    
+    // Tree detection parameters group
+    QGroupBox* tree_detection_group = new QGroupBox("Tree Detection Parameters");
+    QGridLayout* tree_detection_layout = new QGridLayout(tree_detection_group);
+    
+    row = 0;
+    tree_detection_layout->addWidget(new QLabel("Tree Height Min (m):"), row, 0);
+    tree_height_min_spin_ = new QDoubleSpinBox();
+    tree_height_min_spin_->setRange(0.1, 2.0);
+    tree_height_min_spin_->setSingleStep(0.1);
+    tree_height_min_spin_->setValue(0.4);
+    tree_detection_layout->addWidget(tree_height_min_spin_, row++, 1);
+    
+    tree_detection_layout->addWidget(new QLabel("Tree Height Max (m):"), row, 0);
+    tree_height_max_spin_ = new QDoubleSpinBox();
+    tree_height_max_spin_->setRange(0.1, 3.0);
+    tree_height_max_spin_->setSingleStep(0.1);
+    tree_height_max_spin_->setValue(0.7);
+    tree_detection_layout->addWidget(tree_height_max_spin_, row++, 1);
+    
+    tree_detection_layout->addWidget(new QLabel("Tree Cluster Tolerance (m):"), row, 0);
+    tree_cluster_tolerance_spin_ = new QDoubleSpinBox();
+    tree_cluster_tolerance_spin_->setRange(0.1, 2.0);
+    tree_cluster_tolerance_spin_->setSingleStep(0.1);
+    tree_cluster_tolerance_spin_->setValue(0.5);
+    tree_detection_layout->addWidget(tree_cluster_tolerance_spin_, row++, 1);
+    
+    tree_detection_layout->addWidget(new QLabel("Tree Min Cluster Size:"), row, 0);
+    tree_min_cluster_size_spin_ = new QSpinBox();
+    tree_min_cluster_size_spin_->setRange(1, 100);
+    tree_min_cluster_size_spin_->setValue(10);
+    tree_detection_layout->addWidget(tree_min_cluster_size_spin_, row++, 1);
+    
+    layout->addWidget(tree_detection_group);
+    
+    // Row detection parameters group
+    QGroupBox* row_detection_group = new QGroupBox("Row Detection Parameters");
+    QGridLayout* row_detection_layout = new QGridLayout(row_detection_group);
+    
+    row = 0;
+    row_detection_layout->addWidget(new QLabel("Row Tolerance (m):"), row, 0);
+    row_tolerance_spin_ = new QDoubleSpinBox();
+    row_tolerance_spin_->setRange(0.5, 5.0);
+    row_tolerance_spin_->setSingleStep(0.1);
+    row_tolerance_spin_->setValue(1.5);
+    row_detection_layout->addWidget(row_tolerance_spin_, row++, 1);
+    
+    row_detection_layout->addWidget(new QLabel("Row Min Length (m):"), row, 0);
+    row_min_length_spin_ = new QDoubleSpinBox();
+    row_min_length_spin_->setRange(1.0, 20.0);
+    row_min_length_spin_->setSingleStep(0.5);
+    row_min_length_spin_->setValue(5.0);
+    row_detection_layout->addWidget(row_min_length_spin_, row++, 1);
+    
+    row_detection_layout->addWidget(new QLabel("Row Min Trees:"), row, 0);
+    row_min_trees_spin_ = new QSpinBox();
+    row_min_trees_spin_->setRange(1, 20);
+    row_min_trees_spin_->setValue(3);
+    row_detection_layout->addWidget(row_min_trees_spin_, row++, 1);
+    
+    layout->addWidget(row_detection_group);
+    
+    // Radius search clustering parameters group
+    QGroupBox* clustering_group = new QGroupBox("Clustering Parameters");
+    QGridLayout* clustering_layout = new QGridLayout(clustering_group);
+    
+    row = 0;
+    clustering_layout->addWidget(new QLabel("Center Search Radius (m):"), row, 0);
+    center_search_radius_spin_ = new QDoubleSpinBox();
+    center_search_radius_spin_->setRange(0.01, 1.0);
+    center_search_radius_spin_->setSingleStep(0.01);
+    center_search_radius_spin_->setValue(0.15);
+    clustering_layout->addWidget(center_search_radius_spin_, row++, 1);
+    
+    clustering_layout->addWidget(new QLabel("Clustering Radius (m):"), row, 0);
+    clustering_radius_spin_ = new QDoubleSpinBox();
+    clustering_radius_spin_->setRange(0.1, 5.0);
+    clustering_radius_spin_->setSingleStep(0.1);
+    clustering_radius_spin_->setValue(0.8);
+    clustering_layout->addWidget(clustering_radius_spin_, row++, 1);
+    
+    clustering_layout->addWidget(new QLabel("Min Neighbors in Radius:"), row, 0);
+    min_neighbors_in_radius_spin_ = new QSpinBox();
+    min_neighbors_in_radius_spin_->setRange(0, 20);
+    min_neighbors_in_radius_spin_->setValue(0);
+    clustering_layout->addWidget(min_neighbors_in_radius_spin_, row++, 1);
+    
+    layout->addWidget(clustering_group);
+    
+    // Orbit anchor parameters group
+    QGroupBox* orbit_group = new QGroupBox("Orbit Anchor Parameters");
+    QGridLayout* orbit_layout = new QGridLayout(orbit_group);
+    
+    row = 0;
+    orbit_layout->addWidget(new QLabel("Orbit Radius (m):"), row, 0);
     orbit_radius_spin_ = new QDoubleSpinBox();
     orbit_radius_spin_->setRange(0.5, 10.0);
     orbit_radius_spin_->setSingleStep(0.1);
     orbit_radius_spin_->setValue(2.0);
-    params_layout->addWidget(orbit_radius_spin_, row++, 1);
+    orbit_layout->addWidget(orbit_radius_spin_, row++, 1);
     
-    params_layout->addWidget(new QLabel("Orbit Spacing (m):"), row, 0);
+    orbit_layout->addWidget(new QLabel("Orbit Spacing (m):"), row, 0);
     orbit_spacing_spin_ = new QDoubleSpinBox();
     orbit_spacing_spin_->setRange(0.1, 5.0);
     orbit_spacing_spin_->setSingleStep(0.1);
     orbit_spacing_spin_->setValue(1.0);
-    params_layout->addWidget(orbit_spacing_spin_, row++, 1);
+    orbit_layout->addWidget(orbit_spacing_spin_, row++, 1);
     
-    layout->addWidget(params_group);
+    layout->addWidget(orbit_group);
+    
+    // Path planning parameters group
+    QGroupBox* path_planning_group = new QGroupBox("Path Planning Parameters");
+    QGridLayout* path_planning_layout = new QGridLayout(path_planning_group);
+    
+    row = 0;
+    path_planning_layout->addWidget(new QLabel("Path Resolution (m):"), row, 0);
+    path_resolution_spin_ = new QDoubleSpinBox();
+    path_resolution_spin_->setRange(0.01, 1.0);
+    path_resolution_spin_->setSingleStep(0.01);
+    path_resolution_spin_->setValue(0.1);
+    path_planning_layout->addWidget(path_resolution_spin_, row++, 1);
+    
+    path_planning_layout->addWidget(new QLabel("Path Smoothing Factor:"), row, 0);
+    path_smoothing_factor_spin_ = new QDoubleSpinBox();
+    path_smoothing_factor_spin_->setRange(0.0, 2.0);
+    path_smoothing_factor_spin_->setSingleStep(0.1);
+    path_smoothing_factor_spin_->setValue(0.5);
+    path_planning_layout->addWidget(path_smoothing_factor_spin_, row++, 1);
+    
+    layout->addWidget(path_planning_group);
+    
+    // GVD Topology parameters group
+    QGroupBox* gvd_group = new QGroupBox("GVD Topology Parameters");
+    QGridLayout* gvd_layout = new QGridLayout(gvd_group);
+    
+    row = 0;
+    gvd_layout->addWidget(new QLabel("Connect Radius (cells):"), row, 0);
+    connect_radius_spin_ = new QSpinBox();
+    connect_radius_spin_->setRange(1, 50);
+    connect_radius_spin_->setValue(10);
+    gvd_layout->addWidget(connect_radius_spin_, row++, 1);
+    
+    layout->addWidget(gvd_group);
+    
     layout->addStretch();
 }
 
@@ -640,6 +917,9 @@ void OrbitPanelPlugin::setupROS2() {
     // Create service clients
     start_exploration_client_ = ros_node_->create_client<std_srvs::srv::Empty>("/orbit_planner/start_exploration");
     stop_exploration_client_ = ros_node_->create_client<std_srvs::srv::Empty>("/orbit_planner/stop_exploration");
+    
+    // Create parameter publisher for real-time parameter updates
+    parameter_pub_ = ros_node_->create_publisher<std_msgs::msg::String>("/orbit_planner/parameter_update", 10);
 }
 
 void OrbitPanelPlugin::connectSignals() {
@@ -657,6 +937,10 @@ void OrbitPanelPlugin::connectSignals() {
     connect(reset_btn_, &QPushButton::clicked, this, &OrbitPanelPlugin::onResetExploration);
     
     // Connect parameter change signals
+    connect(map_update_rate_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), 
+            this, &OrbitPanelPlugin::onParameterChanged);
+    connect(planning_rate_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), 
+            this, &OrbitPanelPlugin::onParameterChanged);
     connect(robot_radius_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), 
             this, &OrbitPanelPlugin::onParameterChanged);
     connect(safety_margin_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), 
@@ -665,48 +949,134 @@ void OrbitPanelPlugin::connectSignals() {
             this, &OrbitPanelPlugin::onParameterChanged);
     connect(frontier_cluster_min_size_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), 
             this, &OrbitPanelPlugin::onParameterChanged);
+    connect(frontier_cluster_max_distance_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), 
+            this, &OrbitPanelPlugin::onParameterChanged);
+    connect(goal_tolerance_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), 
+            this, &OrbitPanelPlugin::onParameterChanged);
     connect(yaw_change_weight_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), 
             this, &OrbitPanelPlugin::onParameterChanged);
     connect(frontier_gain_weight_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), 
+            this, &OrbitPanelPlugin::onParameterChanged);
+    connect(distance_weight_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), 
+            this, &OrbitPanelPlugin::onParameterChanged);
+    connect(tree_height_min_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), 
+            this, &OrbitPanelPlugin::onParameterChanged);
+    connect(tree_height_max_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), 
+            this, &OrbitPanelPlugin::onParameterChanged);
+    connect(tree_cluster_tolerance_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), 
+            this, &OrbitPanelPlugin::onParameterChanged);
+    connect(tree_min_cluster_size_spin_, QOverload<int>::of(&QSpinBox::valueChanged), 
+            this, &OrbitPanelPlugin::onParameterChanged);
+    connect(row_tolerance_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), 
+            this, &OrbitPanelPlugin::onParameterChanged);
+    connect(row_min_length_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), 
+            this, &OrbitPanelPlugin::onParameterChanged);
+    connect(row_min_trees_spin_, QOverload<int>::of(&QSpinBox::valueChanged), 
+            this, &OrbitPanelPlugin::onParameterChanged);
+    connect(center_search_radius_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), 
+            this, &OrbitPanelPlugin::onParameterChanged);
+    connect(clustering_radius_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), 
+            this, &OrbitPanelPlugin::onParameterChanged);
+    connect(min_neighbors_in_radius_spin_, QOverload<int>::of(&QSpinBox::valueChanged), 
             this, &OrbitPanelPlugin::onParameterChanged);
     connect(orbit_radius_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), 
             this, &OrbitPanelPlugin::onParameterChanged);
     connect(orbit_spacing_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), 
             this, &OrbitPanelPlugin::onParameterChanged);
+    connect(path_resolution_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), 
+            this, &OrbitPanelPlugin::onParameterChanged);
+    connect(path_smoothing_factor_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), 
+            this, &OrbitPanelPlugin::onParameterChanged);
+    connect(connect_radius_spin_, QOverload<int>::of(&QSpinBox::valueChanged), 
+            this, &OrbitPanelPlugin::onParameterChanged);
 }
 
 void OrbitPanelPlugin::loadParameters() {
-    // Load parameters from ROS2 parameter server
-    ros_node_->declare_parameter("robot_radius", 0.5);
-    ros_node_->declare_parameter("safety_margin", 0.2);
-    ros_node_->declare_parameter("max_planning_distance", 10.0);
+    // Load parameters from ROS2 parameter server with default values from YAML
+    ros_node_->declare_parameter("map_update_rate", 2.0);
+    ros_node_->declare_parameter("planning_rate", 1.0);
+    ros_node_->declare_parameter("robot_radius", 0.4);
+    ros_node_->declare_parameter("safety_margin", 0.1);
+    ros_node_->declare_parameter("max_planning_distance", 50.0);
     ros_node_->declare_parameter("frontier_cluster_min_size", 5.0);
-    ros_node_->declare_parameter("yaw_change_weight", 1.0);
+    ros_node_->declare_parameter("frontier_cluster_max_distance", 10.0);
+    ros_node_->declare_parameter("goal_tolerance", 1.0);
+    ros_node_->declare_parameter("yaw_change_weight", 0.5);
     ros_node_->declare_parameter("frontier_gain_weight", 1.0);
+    ros_node_->declare_parameter("distance_weight", 1.0);
+    ros_node_->declare_parameter("tree_height_min", 0.4);
+    ros_node_->declare_parameter("tree_height_max", 0.7);
+    ros_node_->declare_parameter("tree_cluster_tolerance", 0.5);
+    ros_node_->declare_parameter("tree_min_cluster_size", 10);
+    ros_node_->declare_parameter("row_tolerance", 1.5);
+    ros_node_->declare_parameter("row_min_length", 5.0);
+    ros_node_->declare_parameter("row_min_trees", 3);
+    ros_node_->declare_parameter("center_search_radius", 0.15);
+    ros_node_->declare_parameter("clustering_radius", 0.8);
+    ros_node_->declare_parameter("min_neighbors_in_radius", 0);
     ros_node_->declare_parameter("orbit_radius", 2.0);
     ros_node_->declare_parameter("orbit_spacing", 1.0);
+    ros_node_->declare_parameter("path_resolution", 0.1);
+    ros_node_->declare_parameter("path_smoothing_factor", 0.5);
+    ros_node_->declare_parameter("connect_radius", 10);
     
     // Update UI with loaded parameters
+    map_update_rate_spin_->setValue(ros_node_->get_parameter("map_update_rate").as_double());
+    planning_rate_spin_->setValue(ros_node_->get_parameter("planning_rate").as_double());
     robot_radius_spin_->setValue(ros_node_->get_parameter("robot_radius").as_double());
     safety_margin_spin_->setValue(ros_node_->get_parameter("safety_margin").as_double());
     max_planning_distance_spin_->setValue(ros_node_->get_parameter("max_planning_distance").as_double());
     frontier_cluster_min_size_spin_->setValue(ros_node_->get_parameter("frontier_cluster_min_size").as_double());
+    frontier_cluster_max_distance_spin_->setValue(ros_node_->get_parameter("frontier_cluster_max_distance").as_double());
+    goal_tolerance_spin_->setValue(ros_node_->get_parameter("goal_tolerance").as_double());
     yaw_change_weight_spin_->setValue(ros_node_->get_parameter("yaw_change_weight").as_double());
     frontier_gain_weight_spin_->setValue(ros_node_->get_parameter("frontier_gain_weight").as_double());
+    distance_weight_spin_->setValue(ros_node_->get_parameter("distance_weight").as_double());
+    tree_height_min_spin_->setValue(ros_node_->get_parameter("tree_height_min").as_double());
+    tree_height_max_spin_->setValue(ros_node_->get_parameter("tree_height_max").as_double());
+    tree_cluster_tolerance_spin_->setValue(ros_node_->get_parameter("tree_cluster_tolerance").as_double());
+    tree_min_cluster_size_spin_->setValue(ros_node_->get_parameter("tree_min_cluster_size").as_int());
+    row_tolerance_spin_->setValue(ros_node_->get_parameter("row_tolerance").as_double());
+    row_min_length_spin_->setValue(ros_node_->get_parameter("row_min_length").as_double());
+    row_min_trees_spin_->setValue(ros_node_->get_parameter("row_min_trees").as_int());
+    center_search_radius_spin_->setValue(ros_node_->get_parameter("center_search_radius").as_double());
+    clustering_radius_spin_->setValue(ros_node_->get_parameter("clustering_radius").as_double());
+    min_neighbors_in_radius_spin_->setValue(ros_node_->get_parameter("min_neighbors_in_radius").as_int());
     orbit_radius_spin_->setValue(ros_node_->get_parameter("orbit_radius").as_double());
     orbit_spacing_spin_->setValue(ros_node_->get_parameter("orbit_spacing").as_double());
+    path_resolution_spin_->setValue(ros_node_->get_parameter("path_resolution").as_double());
+    path_smoothing_factor_spin_->setValue(ros_node_->get_parameter("path_smoothing_factor").as_double());
+    connect_radius_spin_->setValue(ros_node_->get_parameter("connect_radius").as_int());
 }
 
 void OrbitPanelPlugin::saveParameters() {
     // Save parameters to ROS2 parameter server
+    ros_node_->set_parameter(rclcpp::Parameter("map_update_rate", map_update_rate_spin_->value()));
+    ros_node_->set_parameter(rclcpp::Parameter("planning_rate", planning_rate_spin_->value()));
     ros_node_->set_parameter(rclcpp::Parameter("robot_radius", robot_radius_spin_->value()));
     ros_node_->set_parameter(rclcpp::Parameter("safety_margin", safety_margin_spin_->value()));
     ros_node_->set_parameter(rclcpp::Parameter("max_planning_distance", max_planning_distance_spin_->value()));
     ros_node_->set_parameter(rclcpp::Parameter("frontier_cluster_min_size", frontier_cluster_min_size_spin_->value()));
+    ros_node_->set_parameter(rclcpp::Parameter("frontier_cluster_max_distance", frontier_cluster_max_distance_spin_->value()));
+    ros_node_->set_parameter(rclcpp::Parameter("goal_tolerance", goal_tolerance_spin_->value()));
     ros_node_->set_parameter(rclcpp::Parameter("yaw_change_weight", yaw_change_weight_spin_->value()));
     ros_node_->set_parameter(rclcpp::Parameter("frontier_gain_weight", frontier_gain_weight_spin_->value()));
+    ros_node_->set_parameter(rclcpp::Parameter("distance_weight", distance_weight_spin_->value()));
+    ros_node_->set_parameter(rclcpp::Parameter("tree_height_min", tree_height_min_spin_->value()));
+    ros_node_->set_parameter(rclcpp::Parameter("tree_height_max", tree_height_max_spin_->value()));
+    ros_node_->set_parameter(rclcpp::Parameter("tree_cluster_tolerance", tree_cluster_tolerance_spin_->value()));
+    ros_node_->set_parameter(rclcpp::Parameter("tree_min_cluster_size", tree_min_cluster_size_spin_->value()));
+    ros_node_->set_parameter(rclcpp::Parameter("row_tolerance", row_tolerance_spin_->value()));
+    ros_node_->set_parameter(rclcpp::Parameter("row_min_length", row_min_length_spin_->value()));
+    ros_node_->set_parameter(rclcpp::Parameter("row_min_trees", row_min_trees_spin_->value()));
+    ros_node_->set_parameter(rclcpp::Parameter("center_search_radius", center_search_radius_spin_->value()));
+    ros_node_->set_parameter(rclcpp::Parameter("clustering_radius", clustering_radius_spin_->value()));
+    ros_node_->set_parameter(rclcpp::Parameter("min_neighbors_in_radius", min_neighbors_in_radius_spin_->value()));
     ros_node_->set_parameter(rclcpp::Parameter("orbit_radius", orbit_radius_spin_->value()));
     ros_node_->set_parameter(rclcpp::Parameter("orbit_spacing", orbit_spacing_spin_->value()));
+    ros_node_->set_parameter(rclcpp::Parameter("path_resolution", path_resolution_spin_->value()));
+    ros_node_->set_parameter(rclcpp::Parameter("path_smoothing_factor", path_smoothing_factor_spin_->value()));
+    ros_node_->set_parameter(rclcpp::Parameter("connect_radius", connect_radius_spin_->value()));
 }
 
 void OrbitPanelPlugin::publishPolygon() {

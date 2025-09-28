@@ -16,6 +16,7 @@
 #include <rviz_common/panel.hpp>
 #include <rviz_common/display_context.hpp>
 #include <rviz_common/ros_integration/ros_node_abstraction.hpp>
+#include <std_msgs/msg/string.hpp>
 
 #include <QWidget>
 #include <QVBoxLayout>
@@ -105,6 +106,9 @@ private:
     rclcpp::Client<std_srvs::srv::Empty>::SharedPtr start_exploration_client_;
     rclcpp::Client<std_srvs::srv::Empty>::SharedPtr stop_exploration_client_;
     
+    // Publishers
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr parameter_pub_;
+    
     // UI Components
     QVBoxLayout* main_layout_;
     QTabWidget* tab_widget_;
@@ -145,14 +149,52 @@ private:
     
     // Parameters Tab
     QWidget* parameters_tab_;
+    
+    // Update rates
+    QDoubleSpinBox* map_update_rate_spin_;
+    QDoubleSpinBox* planning_rate_spin_;
+    
+    // Robot parameters
     QDoubleSpinBox* robot_radius_spin_;
     QDoubleSpinBox* safety_margin_spin_;
+    
+    // Exploration parameters
     QDoubleSpinBox* max_planning_distance_spin_;
     QDoubleSpinBox* frontier_cluster_min_size_spin_;
+    QDoubleSpinBox* frontier_cluster_max_distance_spin_;
+    QDoubleSpinBox* goal_tolerance_spin_;
+    
+    // Cost weights
     QDoubleSpinBox* yaw_change_weight_spin_;
     QDoubleSpinBox* frontier_gain_weight_spin_;
+    QDoubleSpinBox* distance_weight_spin_;
+    
+    // Tree detection parameters
+    QDoubleSpinBox* tree_height_min_spin_;
+    QDoubleSpinBox* tree_height_max_spin_;
+    QDoubleSpinBox* tree_cluster_tolerance_spin_;
+    QSpinBox* tree_min_cluster_size_spin_;
+    
+    // Row detection parameters
+    QDoubleSpinBox* row_tolerance_spin_;
+    QDoubleSpinBox* row_min_length_spin_;
+    QSpinBox* row_min_trees_spin_;
+    
+    // Clustering parameters
+    QDoubleSpinBox* center_search_radius_spin_;
+    QDoubleSpinBox* clustering_radius_spin_;
+    QSpinBox* min_neighbors_in_radius_spin_;
+    
+    // Orbit anchor parameters
     QDoubleSpinBox* orbit_radius_spin_;
     QDoubleSpinBox* orbit_spacing_spin_;
+    
+    // Path planning parameters
+    QDoubleSpinBox* path_resolution_spin_;
+    QDoubleSpinBox* path_smoothing_factor_spin_;
+    
+    // GVD Topology parameters
+    QSpinBox* connect_radius_spin_;
     
     // Data
     std::vector<geometry_msgs::msg::Point> waypoints_;

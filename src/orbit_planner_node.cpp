@@ -1,5 +1,6 @@
 #include "aos/orbit_planner_node.hpp"
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <cmath>
 #include <unordered_map>
 #include <limits>
@@ -83,6 +84,11 @@ OrbitPlannerNode::OrbitPlannerNode()
     filtered_height_band_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
         "/orbit_planner/z_filtered", pointcloud_qos,
         std::bind(&OrbitPlannerNode::filteredHeightBandCallback, this, std::placeholders::_1));
+    
+    // Subscribe to parameter updates from panel
+    parameter_update_sub_ = this->create_subscription<std_msgs::msg::String>(
+        "/orbit_planner/parameter_update", 10,
+        std::bind(&OrbitPlannerNode::parameterUpdateCallback, this, std::placeholders::_1));
     
   // Create publishers
     trajectory_pub_ = this->create_publisher<nav_msgs::msg::Path>(
@@ -1015,23 +1021,17 @@ nav_msgs::msg::OccupancyGrid OrbitPlannerNode::convertPCDToOccupancyGrid(const p
     occupancy_grid.info.origin.position.z = 0.0;
     occupancy_grid.info.origin.orientation.w = 1.0;
     
-    // Initialize occupancy grid data - start with all unknown
-    occupancy_grid.data.assign(grid_width * grid_height, -1);
+    // Initialize occupancy grid data - start with all free
+    occupancy_grid.data.assign(grid_width * grid_height, 0);
     
-    // Simple point-based occupancy mapping
-    for (const auto& point : cloud->points) {
-        // Convert point to grid coordinates
-        int grid_x = static_cast<int>((point.x - occupancy_grid.info.origin.position.x) / resolution);
-        int grid_y = static_cast<int>((point.y - occupancy_grid.info.origin.position.y) / resolution);
-        
-        // Check if point is within grid bounds
-        if (grid_x >= 0 && grid_x < grid_width && grid_y >= 0 && grid_y < grid_height) {
-            int cell_index = grid_y * grid_width + grid_x;
-            occupancy_grid.data[cell_index] = 100; // Occupied
+    // Add individual trees as occupied areas with width
+    for (const auto& row : tree_rows) {
+        for (const auto& tree : row.trees) {
+            addTreeToOccupancyGrid(occupancy_grid, tree, resolution);
         }
     }
     
-    // Add tree rows as occupied areas
+    // Add tree rows as occupied areas with width
     for (const auto& row : tree_rows) {
         addRowToOccupancyGrid(occupancy_grid, row, resolution);
     }
@@ -1256,6 +1256,40 @@ void OrbitPlannerNode::publishSensorMarker(const geometry_msgs::msg::PoseStamped
     sensor_marker_pub_->publish(text_marker);
 }
 
+void OrbitPlannerNode::addTreeToOccupancyGrid(nav_msgs::msg::OccupancyGrid& occupancy_grid, const TreeCluster& tree, double resolution) {
+    // Get grid dimensions
+    int grid_width = occupancy_grid.info.width;
+    int grid_height = occupancy_grid.info.height;
+    
+    // Convert tree center to grid coordinates
+    int center_x = static_cast<int>((tree.center.x - occupancy_grid.info.origin.position.x) / resolution);
+    int center_y = static_cast<int>((tree.center.y - occupancy_grid.info.origin.position.y) / resolution);
+    
+    // Calculate tree radius in grid cells
+    double tree_radius = tree.radius; // Use the tree's radius
+    int radius_cells = static_cast<int>(std::ceil(tree_radius / resolution));
+    
+    // Mark cells within tree radius as occupied
+    for (int dx = -radius_cells; dx <= radius_cells; ++dx) {
+        for (int dy = -radius_cells; dy <= radius_cells; ++dy) {
+            int x = center_x + dx;
+            int y = center_y + dy;
+            
+            // Check bounds
+            if (x >= 0 && x < grid_width && y >= 0 && y < grid_height) {
+                // Calculate distance from tree center
+                double dist = std::sqrt(dx * dx + dy * dy) * resolution;
+                
+                // If within tree radius, mark as occupied
+                if (dist <= tree_radius) {
+                    int cell_index = y * grid_width + x;
+                    occupancy_grid.data[cell_index] = 100; // Occupied
+                }
+            }
+        }
+    }
+}
+
 void OrbitPlannerNode::addRowToOccupancyGrid(nav_msgs::msg::OccupancyGrid& occupancy_grid, const TreeRow& row, double resolution) {
     // Convert row start and end points to grid coordinates
     int start_x = static_cast<int>((row.start_point.x - occupancy_grid.info.origin.position.x) / resolution);
@@ -1317,6 +1351,154 @@ void OrbitPlannerNode::addRowToOccupancyGrid(nav_msgs::msg::OccupancyGrid& occup
                 }
             }
         }
+    }
+}
+
+void OrbitPlannerNode::parameterUpdateCallback(const std_msgs::msg::String::SharedPtr msg) {
+    try {
+        // Parse parameter string (format: "key1=value1;key2=value2;...")
+        std::string param_str = msg->data;
+        std::istringstream iss(param_str);
+        std::string param_pair;
+        
+        bool parameters_updated = false;
+        
+        while (std::getline(iss, param_pair, ';')) {
+            size_t equal_pos = param_pair.find('=');
+            if (equal_pos != std::string::npos) {
+                std::string key = param_pair.substr(0, equal_pos);
+                std::string value_str = param_pair.substr(equal_pos + 1);
+                
+                // Update parameters based on key
+                if (key == "map_update_rate") {
+                    params_.map_update_rate = std::stod(value_str);
+                    this->set_parameter(rclcpp::Parameter("map_update_rate", params_.map_update_rate));
+                    parameters_updated = true;
+                } else if (key == "planning_rate") {
+                    params_.planning_rate = std::stod(value_str);
+                    this->set_parameter(rclcpp::Parameter("planning_rate", params_.planning_rate));
+                    parameters_updated = true;
+                } else if (key == "robot_radius") {
+                    params_.robot_radius = std::stod(value_str);
+                    this->set_parameter(rclcpp::Parameter("robot_radius", params_.robot_radius));
+                    parameters_updated = true;
+                } else if (key == "safety_margin") {
+                    params_.safety_margin = std::stod(value_str);
+                    this->set_parameter(rclcpp::Parameter("safety_margin", params_.safety_margin));
+                    parameters_updated = true;
+                } else if (key == "max_planning_distance") {
+                    params_.max_planning_distance = std::stod(value_str);
+                    this->set_parameter(rclcpp::Parameter("max_planning_distance", params_.max_planning_distance));
+                    parameters_updated = true;
+                } else if (key == "frontier_cluster_min_size") {
+                    params_.frontier_cluster_min_size = std::stod(value_str);
+                    this->set_parameter(rclcpp::Parameter("frontier_cluster_min_size", params_.frontier_cluster_min_size));
+                    parameters_updated = true;
+                } else if (key == "frontier_cluster_max_distance") {
+                    params_.frontier_cluster_max_distance = std::stod(value_str);
+                    this->set_parameter(rclcpp::Parameter("frontier_cluster_max_distance", params_.frontier_cluster_max_distance));
+                    parameters_updated = true;
+                } else if (key == "goal_tolerance") {
+                    params_.goal_tolerance = std::stod(value_str);
+                    this->set_parameter(rclcpp::Parameter("goal_tolerance", params_.goal_tolerance));
+                    parameters_updated = true;
+                } else if (key == "yaw_change_weight") {
+                    params_.yaw_change_weight = std::stod(value_str);
+                    this->set_parameter(rclcpp::Parameter("yaw_change_weight", params_.yaw_change_weight));
+                    parameters_updated = true;
+                } else if (key == "frontier_gain_weight") {
+                    params_.frontier_gain_weight = std::stod(value_str);
+                    this->set_parameter(rclcpp::Parameter("frontier_gain_weight", params_.frontier_gain_weight));
+                    parameters_updated = true;
+                } else if (key == "distance_weight") {
+                    params_.distance_weight = std::stod(value_str);
+                    this->set_parameter(rclcpp::Parameter("distance_weight", params_.distance_weight));
+                    parameters_updated = true;
+                } else if (key == "tree_height_min") {
+                    params_.tree_height_min = std::stod(value_str);
+                    this->set_parameter(rclcpp::Parameter("tree_height_min", params_.tree_height_min));
+                    parameters_updated = true;
+                } else if (key == "tree_height_max") {
+                    params_.tree_height_max = std::stod(value_str);
+                    this->set_parameter(rclcpp::Parameter("tree_height_max", params_.tree_height_max));
+                    parameters_updated = true;
+                } else if (key == "tree_cluster_tolerance") {
+                    params_.tree_cluster_tolerance = std::stod(value_str);
+                    this->set_parameter(rclcpp::Parameter("tree_cluster_tolerance", params_.tree_cluster_tolerance));
+                    parameters_updated = true;
+                } else if (key == "tree_min_cluster_size") {
+                    params_.tree_min_cluster_size = std::stoi(value_str);
+                    this->set_parameter(rclcpp::Parameter("tree_min_cluster_size", params_.tree_min_cluster_size));
+                    parameters_updated = true;
+                } else if (key == "row_tolerance") {
+                    params_.row_tolerance = std::stod(value_str);
+                    this->set_parameter(rclcpp::Parameter("row_tolerance", params_.row_tolerance));
+                    parameters_updated = true;
+                } else if (key == "row_min_length") {
+                    params_.row_min_length = std::stod(value_str);
+                    this->set_parameter(rclcpp::Parameter("row_min_length", params_.row_min_length));
+                    parameters_updated = true;
+                } else if (key == "row_min_trees") {
+                    params_.row_min_trees = std::stoi(value_str);
+                    this->set_parameter(rclcpp::Parameter("row_min_trees", params_.row_min_trees));
+                    parameters_updated = true;
+                } else if (key == "center_search_radius") {
+                    params_.center_search_radius = std::stod(value_str);
+                    this->set_parameter(rclcpp::Parameter("center_search_radius", params_.center_search_radius));
+                    parameters_updated = true;
+                } else if (key == "clustering_radius") {
+                    params_.clustering_radius = std::stod(value_str);
+                    this->set_parameter(rclcpp::Parameter("clustering_radius", params_.clustering_radius));
+                    parameters_updated = true;
+                } else if (key == "min_neighbors_in_radius") {
+                    params_.min_neighbors_in_radius = std::stoi(value_str);
+                    this->set_parameter(rclcpp::Parameter("min_neighbors_in_radius", params_.min_neighbors_in_radius));
+                    parameters_updated = true;
+                } else if (key == "orbit_radius") {
+                    params_.orbit_radius = std::stod(value_str);
+                    this->set_parameter(rclcpp::Parameter("orbit_radius", params_.orbit_radius));
+                    parameters_updated = true;
+                } else if (key == "orbit_spacing") {
+                    params_.orbit_spacing = std::stod(value_str);
+                    this->set_parameter(rclcpp::Parameter("orbit_spacing", params_.orbit_spacing));
+                    parameters_updated = true;
+                } else if (key == "path_resolution") {
+                    params_.path_resolution = std::stod(value_str);
+                    this->set_parameter(rclcpp::Parameter("path_resolution", params_.path_resolution));
+                    parameters_updated = true;
+                } else if (key == "path_smoothing_factor") {
+                    params_.path_smoothing_factor = std::stod(value_str);
+                    this->set_parameter(rclcpp::Parameter("path_smoothing_factor", params_.path_smoothing_factor));
+                    parameters_updated = true;
+                }
+            }
+        }
+        
+        if (parameters_updated) {
+            // Update component parameters
+            tree_clusterer_->setParameters(
+                params_.tree_height_min, params_.tree_height_max,
+                params_.tree_cluster_tolerance, params_.tree_min_cluster_size,
+                0.1, params_.row_tolerance, params_.row_min_length, params_.row_min_trees,
+                params_.center_search_radius, params_.clustering_radius, params_.min_neighbors_in_radius);
+            
+            frontier_detector_->setParameters(
+                params_.robot_radius, static_cast<int>(params_.frontier_cluster_min_size),
+                params_.max_planning_distance, params_.frontier_gain_weight);
+            
+            path_planner_->setParameters(
+                params_.robot_radius, params_.safety_margin,
+                params_.path_resolution, params_.max_planning_distance);
+            
+            orbit_anchor_generator_->setParameters(
+                params_.orbit_radius, params_.orbit_spacing,
+                5.0, params_.max_planning_distance);
+            
+            RCLCPP_INFO(this->get_logger(), "Parameters updated successfully from panel");
+        }
+        
+    } catch (const std::exception& e) {
+        RCLCPP_ERROR(this->get_logger(), "Failed to parse parameter update: %s", e.what());
     }
 }
 

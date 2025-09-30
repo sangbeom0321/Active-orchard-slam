@@ -1024,12 +1024,12 @@ nav_msgs::msg::OccupancyGrid OrbitPlannerNode::convertPCDToOccupancyGrid(const p
     // Initialize occupancy grid data - start with all free
     occupancy_grid.data.assign(grid_width * grid_height, 0);
     
-    // Add individual trees as occupied areas with width
-    for (const auto& row : tree_rows) {
-        for (const auto& tree : row.trees) {
-            addTreeToOccupancyGrid(occupancy_grid, tree, resolution);
-        }
-    }
+    // // Add individual trees as occupied areas with width
+    // for (const auto& row : tree_rows) {
+    //     for (const auto& tree : row.trees) {
+    //         addTreeToOccupancyGrid(occupancy_grid, tree, resolution);
+    //     }
+    // }
     
     // Add tree rows as occupied areas with width
     for (const auto& row : tree_rows) {

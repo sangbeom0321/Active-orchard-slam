@@ -53,4 +53,4 @@
     esdf_update_rate: 2.0
 
     # GVD Topology parameters
-    connect_radius: 10
+    connect_radius: 15

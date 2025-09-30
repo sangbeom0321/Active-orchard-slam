@@ -1470,8 +1470,8 @@ private:
       } else {
         auto raw_path = aStar(s_node, g_node);
         if (raw_path.empty()) {
-          RCLCPP_ERROR(this->get_logger(), "A* path planning failed for waypoint %zu!", i+1);
-          current_gvd_node = g_node;
+          RCLCPP_ERROR(this->get_logger(), "A* path planning failed for waypoint %zu - maintaining current GVD node", i+1);
+          // Keep current_gvd_node unchanged when path planning fails
           continue;
         }
         
@@ -1490,6 +1490,35 @@ private:
         // Update current GVD node to the goal node for next iteration
         current_gvd_node = g_node;
       }
+    }
+    
+    // Add return path to origin (0, 0) after visiting all waypoints
+    RCLCPP_INFO(this->get_logger(), "Adding return path to origin (0, 0)");
+    
+    int origin_idx = worldToIndex(0.0, 0.0);
+    int origin_gvd_node = findNearestNode(origin_idx);
+    
+    if (current_gvd_node != origin_gvd_node) {
+      auto return_path = aStar(current_gvd_node, origin_gvd_node);
+      if (return_path.empty()) {
+        RCLCPP_ERROR(this->get_logger(), "A* path planning failed for return to origin!");
+      } else {
+        // Add used GVD nodes to visualization list
+        for (int node_id : return_path) {
+          used_gvd_nodes_.push_back(node_id);
+        }
+        
+        auto smooth_return_pts = projectAndSmooth(return_path);
+        
+        // Add return path to full tour (skip first point to avoid duplication)
+        for (size_t k = 1; k < smooth_return_pts.size(); ++k) {
+          full_tour_path.push_back(smooth_return_pts[k]);
+        }
+        
+        RCLCPP_INFO(this->get_logger(), "Return path added with %zu points", smooth_return_pts.size());
+      }
+    } else {
+      RCLCPP_INFO(this->get_logger(), "Already at origin, no return path needed");
     }
     
     // Publish the complete waypoint tour
@@ -1523,6 +1552,58 @@ private:
     pub_waypoint_path_->publish(path);
   }
   
+  // Generate artificial intersections at 1.5m intervals when no real intersections are found
+  std::vector<std::pair<geometry_msgs::msg::Point, std::string>> generateArtificialIntersections(const TreeRow& row) {
+    std::vector<std::pair<geometry_msgs::msg::Point, std::string>> artificial_intersections;
+    
+    // Calculate row direction (PCA direction)
+    double row_dx = std::cos(row.orientation);
+    double row_dy = std::sin(row.orientation);
+    
+    // Calculate perpendicular direction (90 degrees rotated)
+    double perp_dx = -row_dy; // Perpendicular to row direction
+    double perp_dy = row_dx;
+    
+    // Generate 4 artificial intersections at 1.5m intervals
+    double interval = 1.5; // 1.5m intervals
+    
+    // 1. Start right (1.5m from start point)
+    geometry_msgs::msg::Point start_right;
+    start_right.x = row.start_point.x + perp_dx * interval;
+    start_right.y = row.start_point.y + perp_dy * interval;
+    start_right.z = row.start_point.z;
+    artificial_intersections.push_back({start_right, "start_right"});
+    
+    // 2. End right (1.5m from end point)
+    geometry_msgs::msg::Point end_right;
+    end_right.x = row.end_point.x + perp_dx * interval;
+    end_right.y = row.end_point.y + perp_dy * interval;
+    end_right.z = row.end_point.z;
+    artificial_intersections.push_back({end_right, "end_right"});
+    
+    // 3. End left (1.5m from end point, opposite direction)
+    geometry_msgs::msg::Point end_left;
+    end_left.x = row.end_point.x - perp_dx * interval;
+    end_left.y = row.end_point.y - perp_dy * interval;
+    end_left.z = row.end_point.z;
+    artificial_intersections.push_back({end_left, "end_left"});
+    
+    // 4. Start left (1.5m from start point, opposite direction)
+    geometry_msgs::msg::Point start_left;
+    start_left.x = row.start_point.x - perp_dx * interval;
+    start_left.y = row.start_point.y - perp_dy * interval;
+    start_left.z = row.start_point.z;
+    artificial_intersections.push_back({start_left, "start_left"});
+    
+    RCLCPP_INFO(this->get_logger(), "Generated artificial intersections for row:");
+    RCLCPP_INFO(this->get_logger(), "  Start right: (%.3f, %.3f)", start_right.x, start_right.y);
+    RCLCPP_INFO(this->get_logger(), "  End right: (%.3f, %.3f)", end_right.x, end_right.y);
+    RCLCPP_INFO(this->get_logger(), "  End left: (%.3f, %.3f)", end_left.x, end_left.y);
+    RCLCPP_INFO(this->get_logger(), "  Start left: (%.3f, %.3f)", start_left.x, start_left.y);
+    
+    return artificial_intersections;
+  }
+
   // Find intersection points between perpendicular lines from tree row endpoints and GVD edges
   std::vector<std::pair<geometry_msgs::msg::Point, std::string>> findTreeRowGVDIntersections(const TreeRow& row) {
     std::vector<std::pair<geometry_msgs::msg::Point, std::string>> intersections;
@@ -1738,10 +1819,10 @@ private:
     // Start from map origin (0, 0)
     full_exploration_path.emplace_back(0.0, 0.0);
     
-    // Sort tree rows by their Y position (for top-to-bottom exploration)
+    // Sort tree rows by their Y position (for bottom-to-top exploration)
     std::vector<TreeRow> sorted_rows = tree_rows_;
     std::sort(sorted_rows.begin(), sorted_rows.end(), [](const TreeRow& a, const TreeRow& b) {
-      return a.start_point.y > b.start_point.y; // Sort by Y descending (top to bottom)
+      return a.start_point.y < b.start_point.y; // Sort by Y ascending (bottom to top)
     });
     
     int current_gvd_node = -1;
@@ -1752,24 +1833,59 @@ private:
     RCLCPP_INFO(this->get_logger(), "Starting from origin GVD node: %d", current_gvd_node);
     
     int global_visit_order = 1; // Global visit order counter
+    std::vector<geometry_msgs::msg::Point> visited_intersections; // Track visited intersections to avoid duplicates
+    double min_distance_threshold = 1.0; // Minimum distance between intersections to consider them different (in meters)
     
     // Process each tree row
     for (size_t i = 0; i < sorted_rows.size(); ++i) {
       const auto& row = sorted_rows[i];
-      RCLCPP_INFO(this->get_logger(), "Processing tree row %zu: %d trees, orientation: %.3f rad", 
-                  i+1, row.tree_count, row.orientation);
+      std::string pattern = (i % 2 == 0) ? "start_right->end_right->end_left->start_left" : "end_right->start_right->start_left->end_left";
+      RCLCPP_INFO(this->get_logger(), "Processing tree row %zu: %d trees, orientation: %.3f rad, pattern: %s", 
+                  i+1, row.tree_count, row.orientation, pattern.c_str());
       
       // Find GVD intersections for this tree row
       auto intersections = findTreeRowGVDIntersections(row);
       RCLCPP_INFO(this->get_logger(), "Found %zu GVD intersections for row %zu", intersections.size(), i+1);
       
       if (intersections.empty()) {
-        RCLCPP_WARN(this->get_logger(), "No GVD intersections found for tree row %zu", i+1);
-        continue;
+        RCLCPP_WARN(this->get_logger(), "No GVD intersections found for tree row %zu - generating artificial intersections", i+1);
+        
+        // Generate artificial intersections at 1.5m intervals along perpendicular lines
+        intersections = generateArtificialIntersections(row);
+        RCLCPP_INFO(this->get_logger(), "Generated %zu artificial intersections for row %zu", intersections.size(), i+1);
       }
       
-      // Sort intersections by X position (left to right)
-      std::sort(intersections.begin(), intersections.end(), [](const std::pair<geometry_msgs::msg::Point, std::string>& a, const std::pair<geometry_msgs::msg::Point, std::string>& b) {
+      // Sort intersections by type and position - alternating pattern based on row index
+      std::sort(intersections.begin(), intersections.end(), [i](const std::pair<geometry_msgs::msg::Point, std::string>& a, const std::pair<geometry_msgs::msg::Point, std::string>& b) {
+        // Define priority order for intersection types - alternating pattern
+        std::map<std::string, int> type_priority;
+        
+        if (i % 2 == 0) {
+          // Even rows (0, 2, 4...): start_right -> end_right -> end_left -> start_left
+          type_priority = {
+            {"start_right", 1},
+            {"end_right", 2}, 
+            {"end_left", 3},
+            {"start_left", 4}
+          };
+        } else {
+          // Odd rows (1, 3, 5...): end_right -> start_right -> start_left -> end_left
+          type_priority = {
+            {"end_right", 1},
+            {"start_right", 2},
+            {"start_left", 3},
+            {"end_left", 4}
+          };
+        }
+        
+        int priority_a = type_priority[a.second];
+        int priority_b = type_priority[b.second];
+        
+        if (priority_a != priority_b) {
+          return priority_a < priority_b; // Lower priority number first
+        }
+        
+        // If same type, sort by X position (left to right)
         return a.first.x < b.first.x;
       });
       
@@ -1779,6 +1895,22 @@ private:
         const auto& intersection = intersection_pair.first;
         const auto& intersection_type = intersection_pair.second;
         
+        // Check if this intersection is too close to any previously visited intersection
+        bool too_close = false;
+        for (const auto& visited : visited_intersections) {
+          double distance = std::hypot(intersection.x - visited.x, intersection.y - visited.y);
+          if (distance < min_distance_threshold) {
+            too_close = true;
+            RCLCPP_INFO(this->get_logger(), "Skipping intersection %zu (type %s) at (%.3f, %.3f) - too close to visited intersection at (%.3f, %.3f), distance: %.3f m", 
+                        j+1, intersection_type.c_str(), intersection.x, intersection.y, visited.x, visited.y, distance);
+            break;
+          }
+        }
+        
+        if (too_close) {
+          continue; // Skip this intersection
+        }
+        
         RCLCPP_INFO(this->get_logger(), "Planning to intersection %zu (global order %d, type %s): (%.3f, %.3f)", 
                     j+1, global_visit_order, intersection_type.c_str(), intersection.x, intersection.y);
         
@@ -1786,6 +1918,7 @@ private:
         gvd_intersections_.push_back(intersection);
         gvd_intersection_visit_order_.push_back(global_visit_order);
         gvd_intersection_types_.push_back(intersection_type);
+        visited_intersections.push_back(intersection); // Track this intersection as visited
         global_visit_order++;
         
         int s_node = current_gvd_node;
@@ -1798,8 +1931,8 @@ private:
         } else {
           auto raw_path = aStar(s_node, g_node);
           if (raw_path.empty()) {
-            RCLCPP_ERROR(this->get_logger(), "A* path planning failed for intersection %zu!", j+1);
-            current_gvd_node = g_node;
+            RCLCPP_ERROR(this->get_logger(), "A* path planning failed for intersection %zu - maintaining current GVD node", j+1);
+            // Keep current_gvd_node unchanged when path planning fails
             continue;
           }
           
@@ -1819,6 +1952,35 @@ private:
           current_gvd_node = g_node;
         }
       }
+    }
+    
+    // Add return path to origin (0, 0) after visiting all intersections
+    RCLCPP_INFO(this->get_logger(), "Adding return path to origin (0, 0)");
+    
+    int origin_idx = worldToIndex(0.0, 0.0);
+    int origin_gvd_node = findNearestNode(origin_idx);
+    
+    if (current_gvd_node != origin_gvd_node) {
+      auto return_path = aStar(current_gvd_node, origin_gvd_node);
+      if (return_path.empty()) {
+        RCLCPP_ERROR(this->get_logger(), "A* path planning failed for return to origin!");
+      } else {
+        // Add used GVD nodes to visualization list
+        for (int node_id : return_path) {
+          used_gvd_nodes_.push_back(node_id);
+        }
+        
+        auto smooth_return_pts = projectAndSmooth(return_path);
+        
+        // Add return path to full exploration (skip first point to avoid duplication)
+        for (size_t k = 1; k < smooth_return_pts.size(); ++k) {
+          full_exploration_path.push_back(smooth_return_pts[k]);
+        }
+        
+        RCLCPP_INFO(this->get_logger(), "Return path added with %zu points", smooth_return_pts.size());
+      }
+    } else {
+      RCLCPP_INFO(this->get_logger(), "Already at origin, no return path needed");
     }
     
     // Publish the complete orchard exploration path

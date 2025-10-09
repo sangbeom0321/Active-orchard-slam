@@ -18,7 +18,7 @@ Panels:
         - /MarkerArray1
         - /PointCloud21
       Splitter Ratio: 0.5
-    Tree Height: 317
+    Tree Height: 170
   - Class: rviz_common/Selection
     Name: Selection
   - Class: rviz_common/Tool Properties
@@ -242,100 +242,13 @@ Visualization Manager:
       Frame Timeout: 15
       Frames:
         All Enabled: true
-        base_footprint:
-          Value: true
-        base_link:
-          Value: true
-        camera_link:
-          Value: true
-        chassis_link:
-          Value: true
-        fl_steering_wheel_link:
-          Value: true
-        fl_wheel_link:
-          Value: true
-        fr_steering_wheel_link:
-          Value: true
-        fr_wheel_link:
-          Value: true
-        gps2_link_connect:
-          Value: true
-        gps_link_connect:
-          Value: true
-        imu:
-          Value: true
-        imu_link:
-          Value: true
-        laser_sensor_frame:
-          Value: true
-        lidar_connector_link:
-          Value: true
-        lidar_link:
-          Value: true
-        map:
-          Value: true
-        navsat_link:
-          Value: true
-        odom:
-          Value: true
-        ouster:
-          Value: true
-        ouster_base_link:
-          Value: true
-        ranger_base:
-          Value: true
-        rl_steering_wheel_link:
-          Value: true
-        rl_wheel_link:
-          Value: true
-        rr_steering_wheel_link:
-          Value: true
-        rr_wheel_link:
-          Value: true
       Marker Scale: 1
       Name: TF
       Show Arrows: true
       Show Axes: true
       Show Names: false
       Tree:
-        map:
-          odom:
-            base_footprint:
-              {}
-            base_link:
-              chassis_link:
-                imu_link:
-                  laser_sensor_frame:
-                    {}
-                navsat_link:
-                  {}
-              fl_steering_wheel_link:
-                fl_wheel_link:
-                  {}
-              fr_steering_wheel_link:
-                fr_wheel_link:
-                  {}
-              gps2_link_connect:
-                {}
-              gps_link_connect:
-                {}
-              imu:
-                {}
-              lidar_link:
-                {}
-              ranger_base:
-                camera_link:
-                  {}
-                lidar_connector_link:
-                  ouster_base_link:
-                    ouster:
-                      {}
-              rl_steering_wheel_link:
-                rl_wheel_link:
-                  {}
-              rr_steering_wheel_link:
-                rr_wheel_link:
-                  {}
+        {}
       Update Interval: 0
       Value: true
     - Alpha: 1
@@ -439,12 +352,12 @@ Visualization Manager:
 Window Geometry:
   Displays:
     collapsed: false
-  Height: 1043
+  Height: 1094
   Hide Left Dock: false
   Hide Right Dock: false
   OrbitPanelPlugin:
     collapsed: false
-  QMainWindow State: 000000ff00000000fd0000000100000000000001ec000003bdfc0200000005fb000000100044006900730070006c006100790073010000003b00000178000000c700fffffffb0000001200530065006c0065006300740069006f006e0000000144000000780000005c00fffffffb0000001e0054006f006f006c002000500072006f0070006500720074006900650073000000019c0000006c0000005c00fffffffb0000000a0056006900650077007300000001cc000000a0000000a000fffffffb00000020004f007200620069007400500061006e0065006c0050006c007500670069006e01000001b90000023f0000023f00ffffff0000058e000003bd00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  QMainWindow State: 000000ff00000000fd0000000100000000000001ec000003e4fc0200000005fb000000100044006900730070006c0061007900730000000044000000eb000000eb00fffffffb0000001200530065006c0065006300740069006f006e0000000144000000780000006b00fffffffb0000001e0054006f006f006c002000500072006f0070006500720074006900650073000000019c0000006c0000006b00fffffffb0000000a0056006900650077007300000001cc000000a0000000b900fffffffb00000020004f007200620069007400500061006e0065006c0050006c007500670069006e0100000044000003e4000002f2000003360000058d000003e400000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   Selection:
     collapsed: false
   Tool Properties:
@@ -452,5 +365,5 @@ Window Geometry:
   Views:
     collapsed: false
   Width: 1920
-  X: 0
-  Y: 144
+  X: 21
+  Y: 34

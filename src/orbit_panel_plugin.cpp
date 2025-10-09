@@ -13,6 +13,7 @@
 #include <QJsonArray>
 #include <QStandardPaths>
 #include <QDir>
+#include <QDateTime>
 #include <QScrollArea>
 #include <QGroupBox>
 #include <QGridLayout>
@@ -823,6 +824,21 @@ void OrbitPanelPlugin::setupParametersTab() {
     
     layout->addWidget(gvd_group);
     
+    // Default parameters group
+    QGroupBox* defaults_group = new QGroupBox("Default Parameters");
+    QHBoxLayout* defaults_layout = new QHBoxLayout(defaults_group);
+    
+    save_defaults_btn_ = new QPushButton("Save as Defaults");
+    load_defaults_btn_ = new QPushButton("Load Defaults");
+    
+    save_defaults_btn_->setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; }");
+    load_defaults_btn_->setStyleSheet("QPushButton { background-color: #2196F3; color: white; font-weight: bold; }");
+    
+    defaults_layout->addWidget(save_defaults_btn_);
+    defaults_layout->addWidget(load_defaults_btn_);
+    
+    layout->addWidget(defaults_group);
+    
     layout->addStretch();
 }
 
@@ -989,6 +1005,10 @@ void OrbitPanelPlugin::connectSignals() {
             this, &OrbitPanelPlugin::onParameterChanged);
     connect(connect_radius_spin_, QOverload<int>::of(&QSpinBox::valueChanged), 
             this, &OrbitPanelPlugin::onParameterChanged);
+    
+    // Connect default parameters buttons
+    connect(save_defaults_btn_, &QPushButton::clicked, this, &OrbitPanelPlugin::onSaveDefaults);
+    connect(load_defaults_btn_, &QPushButton::clicked, this, &OrbitPanelPlugin::onLoadDefaults);
 }
 
 void OrbitPanelPlugin::loadParameters() {
@@ -1329,6 +1349,141 @@ void OrbitPanelPlugin::onLoadArea() {
     logMessage("Exploration area loaded from: " + fileName.toStdString() + 
               " (" + std::to_string(polygon_points_.size()) + " points)");
     QMessageBox::information(this, "Load Area", "Exploration area loaded successfully!");
+}
+
+void OrbitPanelPlugin::onSaveDefaults() {
+    QString fileName = QFileDialog::getSaveFileName(
+        this,
+        "Save Default Parameters",
+        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/orbit_planner_defaults.json",
+        "JSON Files (*.json)"
+    );
+    
+    if (fileName.isEmpty()) {
+        return;
+    }
+    
+    saveDefaultParameters(fileName.toStdString());
+}
+
+void OrbitPanelPlugin::onLoadDefaults() {
+    QString fileName = QFileDialog::getOpenFileName(
+        this,
+        "Load Default Parameters",
+        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation),
+        "JSON Files (*.json)"
+    );
+    
+    if (fileName.isEmpty()) {
+        return;
+    }
+    
+    loadDefaultParameters(fileName.toStdString());
+}
+
+void OrbitPanelPlugin::saveDefaultParameters(const std::string& filename) {
+    QJsonObject json;
+    json["name"] = "Orbit Planner Default Parameters";
+    json["timestamp"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+    json["version"] = "1.0";
+    
+    // Save all parameter values
+    json["map_update_rate"] = map_update_rate_spin_->value();
+    json["planning_rate"] = planning_rate_spin_->value();
+    json["robot_radius"] = robot_radius_spin_->value();
+    json["safety_margin"] = safety_margin_spin_->value();
+    json["max_planning_distance"] = max_planning_distance_spin_->value();
+    json["frontier_cluster_min_size"] = frontier_cluster_min_size_spin_->value();
+    json["frontier_cluster_max_distance"] = frontier_cluster_max_distance_spin_->value();
+    json["goal_tolerance"] = goal_tolerance_spin_->value();
+    json["yaw_change_weight"] = yaw_change_weight_spin_->value();
+    json["frontier_gain_weight"] = frontier_gain_weight_spin_->value();
+    json["distance_weight"] = distance_weight_spin_->value();
+    json["tree_height_min"] = tree_height_min_spin_->value();
+    json["tree_height_max"] = tree_height_max_spin_->value();
+    json["tree_cluster_tolerance"] = tree_cluster_tolerance_spin_->value();
+    json["tree_min_cluster_size"] = tree_min_cluster_size_spin_->value();
+    json["row_tolerance"] = row_tolerance_spin_->value();
+    json["row_min_length"] = row_min_length_spin_->value();
+    json["row_min_trees"] = row_min_trees_spin_->value();
+    json["center_search_radius"] = center_search_radius_spin_->value();
+    json["clustering_radius"] = clustering_radius_spin_->value();
+    json["min_neighbors_in_radius"] = min_neighbors_in_radius_spin_->value();
+    json["orbit_radius"] = orbit_radius_spin_->value();
+    json["orbit_spacing"] = orbit_spacing_spin_->value();
+    json["path_resolution"] = path_resolution_spin_->value();
+    json["path_smoothing_factor"] = path_smoothing_factor_spin_->value();
+    json["connect_radius"] = connect_radius_spin_->value();
+    
+    QJsonDocument doc(json);
+    
+    QFile file(QString::fromStdString(filename));
+    if (file.open(QIODevice::WriteOnly)) {
+        file.write(doc.toJson());
+        file.close();
+        logMessage("Default parameters saved to: " + filename);
+        QMessageBox::information(this, "Save Defaults", "Default parameters saved successfully!");
+    } else {
+        logMessage("Failed to save default parameters to: " + filename);
+        QMessageBox::critical(this, "Save Defaults", "Failed to save default parameters!");
+    }
+}
+
+void OrbitPanelPlugin::loadDefaultParameters(const std::string& filename) {
+    QFile file(QString::fromStdString(filename));
+    if (!file.open(QIODevice::ReadOnly)) {
+        logMessage("Failed to open file: " + filename);
+        QMessageBox::critical(this, "Load Defaults", "Failed to open file!");
+        return;
+    }
+    
+    QByteArray data = file.readAll();
+    file.close();
+    
+    QJsonParseError error;
+    QJsonDocument doc = QJsonDocument::fromJson(data, &error);
+    
+    if (error.error != QJsonParseError::NoError) {
+        logMessage("JSON parse error: " + error.errorString().toStdString());
+        QMessageBox::critical(this, "Load Defaults", "Invalid JSON file!");
+        return;
+    }
+    
+    QJsonObject json = doc.object();
+    
+    // Load parameter values
+    if (json.contains("map_update_rate")) map_update_rate_spin_->setValue(json["map_update_rate"].toDouble());
+    if (json.contains("planning_rate")) planning_rate_spin_->setValue(json["planning_rate"].toDouble());
+    if (json.contains("robot_radius")) robot_radius_spin_->setValue(json["robot_radius"].toDouble());
+    if (json.contains("safety_margin")) safety_margin_spin_->setValue(json["safety_margin"].toDouble());
+    if (json.contains("max_planning_distance")) max_planning_distance_spin_->setValue(json["max_planning_distance"].toDouble());
+    if (json.contains("frontier_cluster_min_size")) frontier_cluster_min_size_spin_->setValue(json["frontier_cluster_min_size"].toDouble());
+    if (json.contains("frontier_cluster_max_distance")) frontier_cluster_max_distance_spin_->setValue(json["frontier_cluster_max_distance"].toDouble());
+    if (json.contains("goal_tolerance")) goal_tolerance_spin_->setValue(json["goal_tolerance"].toDouble());
+    if (json.contains("yaw_change_weight")) yaw_change_weight_spin_->setValue(json["yaw_change_weight"].toDouble());
+    if (json.contains("frontier_gain_weight")) frontier_gain_weight_spin_->setValue(json["frontier_gain_weight"].toDouble());
+    if (json.contains("distance_weight")) distance_weight_spin_->setValue(json["distance_weight"].toDouble());
+    if (json.contains("tree_height_min")) tree_height_min_spin_->setValue(json["tree_height_min"].toDouble());
+    if (json.contains("tree_height_max")) tree_height_max_spin_->setValue(json["tree_height_max"].toDouble());
+    if (json.contains("tree_cluster_tolerance")) tree_cluster_tolerance_spin_->setValue(json["tree_cluster_tolerance"].toDouble());
+    if (json.contains("tree_min_cluster_size")) tree_min_cluster_size_spin_->setValue(json["tree_min_cluster_size"].toInt());
+    if (json.contains("row_tolerance")) row_tolerance_spin_->setValue(json["row_tolerance"].toDouble());
+    if (json.contains("row_min_length")) row_min_length_spin_->setValue(json["row_min_length"].toDouble());
+    if (json.contains("row_min_trees")) row_min_trees_spin_->setValue(json["row_min_trees"].toInt());
+    if (json.contains("center_search_radius")) center_search_radius_spin_->setValue(json["center_search_radius"].toDouble());
+    if (json.contains("clustering_radius")) clustering_radius_spin_->setValue(json["clustering_radius"].toDouble());
+    if (json.contains("min_neighbors_in_radius")) min_neighbors_in_radius_spin_->setValue(json["min_neighbors_in_radius"].toInt());
+    if (json.contains("orbit_radius")) orbit_radius_spin_->setValue(json["orbit_radius"].toDouble());
+    if (json.contains("orbit_spacing")) orbit_spacing_spin_->setValue(json["orbit_spacing"].toDouble());
+    if (json.contains("path_resolution")) path_resolution_spin_->setValue(json["path_resolution"].toDouble());
+    if (json.contains("path_smoothing_factor")) path_smoothing_factor_spin_->setValue(json["path_smoothing_factor"].toDouble());
+    if (json.contains("connect_radius")) connect_radius_spin_->setValue(json["connect_radius"].toInt());
+    
+    // Save parameters to ROS2 parameter server
+    saveParameters();
+    
+    logMessage("Default parameters loaded from: " + filename);
+    QMessageBox::information(this, "Load Defaults", "Default parameters loaded successfully!");
 }
 
 } // namespace orbit_planner

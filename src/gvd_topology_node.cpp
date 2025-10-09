@@ -3,6 +3,7 @@
 #include <nav_msgs/msg/path.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/pose_array.hpp>
+#include <geometry_msgs/msg/polygon.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 #include <vector>
@@ -78,6 +79,11 @@ public:
     sub_tree_rows_ = create_subscription<visualization_msgs::msg::MarkerArray>(
         "/orbit_planner/tree_rows", 10,
         std::bind(&GvdTopologyNode::treeRowsCallback, this, std::placeholders::_1));
+    
+    // Exploration area subscriber
+    sub_exploration_area_ = create_subscription<geometry_msgs::msg::Polygon>(
+        "/orbit_planner/exploration_area", 10,
+        std::bind(&GvdTopologyNode::explorationAreaCallback, this, std::placeholders::_1));
 
     // Publishers
     pub_path_ = create_publisher<nav_msgs::msg::Path>(ns_ + "/path", 10);
@@ -97,6 +103,7 @@ private:
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_goal_rviz2_;
   rclcpp::Subscription<geometry_msgs::msg::PoseArray>::SharedPtr sub_waypoints_;
   rclcpp::Subscription<visualization_msgs::msg::MarkerArray>::SharedPtr sub_tree_rows_;
+  rclcpp::Subscription<geometry_msgs::msg::Polygon>::SharedPtr sub_exploration_area_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pub_path_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_markers_;
   rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr pub_gvd_grid_;
@@ -134,6 +141,10 @@ private:
   std::vector<TreeRow> tree_rows_;
   bool tree_rows_defined_ = false;
   double tree_row_expansion_distance_ = 2.0; // meters to expand tree rows
+  
+  // Exploration area state
+  std::vector<geometry_msgs::msg::Point> exploration_area_;
+  bool exploration_area_defined_ = false;
   
   // GVD intersection points for visualization
   std::vector<geometry_msgs::msg::Point> gvd_intersections_;
@@ -173,6 +184,19 @@ private:
     if (width_ > 0 && height_ > 0) {
       planWaypointTour(msg->header);
     }
+  }
+  
+  void explorationAreaCallback(const geometry_msgs::msg::Polygon::SharedPtr msg) {
+    exploration_area_.clear();
+    for (const auto& point32 : msg->points) {
+      geometry_msgs::msg::Point point;
+      point.x = point32.x;
+      point.y = point32.y;
+      point.z = point32.z;
+      exploration_area_.push_back(point);
+    }
+    exploration_area_defined_ = true;
+    RCLCPP_INFO(this->get_logger(), "Exploration area received: %zu points", exploration_area_.size());
   }
   
   void treeRowsCallback(const visualization_msgs::msg::MarkerArray::SharedPtr msg) {
@@ -893,6 +917,46 @@ private:
     return my * width_ + mx;
   }
 
+  // Check if a point is inside a polygon using ray casting algorithm
+  bool isPointInPolygon(const geometry_msgs::msg::Point& point, const std::vector<geometry_msgs::msg::Point>& polygon) const {
+    if (polygon.size() < 3) return false;
+    
+    bool inside = false;
+    size_t j = polygon.size() - 1;
+    
+    for (size_t i = 0; i < polygon.size(); i++) {
+      if (((polygon[i].y > point.y) != (polygon[j].y > point.y)) &&
+          (point.x < (polygon[j].x - polygon[i].x) * (point.y - polygon[i].y) / (polygon[j].y - polygon[i].y) + polygon[i].x)) {
+        inside = !inside;
+      }
+      j = i;
+    }
+    
+    return inside;
+  }
+  
+  // Check if a tree row is within the exploration area
+  bool isTreeRowInExplorationArea(const TreeRow& row) const {
+    if (!exploration_area_defined_ || exploration_area_.empty()) {
+      RCLCPP_WARN(this->get_logger(), "No exploration area defined, including all tree rows");
+      return true; // If no exploration area is defined, include all rows
+    }
+    
+    // Check if both start and end points are within the exploration area
+    bool start_inside = isPointInPolygon(row.start_point, exploration_area_);
+    bool end_inside = isPointInPolygon(row.end_point, exploration_area_);
+    
+    // Include row if at least one endpoint is inside the exploration area
+    bool row_inside = start_inside || end_inside;
+    
+    RCLCPP_INFO(this->get_logger(), "Tree row check: start(%.2f,%.2f) %s, end(%.2f,%.2f) %s -> %s", 
+                row.start_point.x, row.start_point.y, start_inside ? "inside" : "outside",
+                row.end_point.x, row.end_point.y, end_inside ? "inside" : "outside",
+                row_inside ? "INCLUDED" : "EXCLUDED");
+    
+    return row_inside;
+  }
+
   // Check if two line segments intersect
   bool lineSegmentsIntersect(double x1, double y1, double x2, double y2,
                             double x3, double y3, double x4, double y4) const {
@@ -1079,7 +1143,7 @@ private:
     return path;
   }
 
-  std::vector<std::pair<double, double>> projectAndSmooth(const std::vector<int> &nodes) const {
+  std::vector<std::pair<double, double>> projectAndSmooth(const std::vector<int> &nodes) {
     std::vector<std::pair<double, double>> P;
     P.reserve(nodes.size());
     for (int id : nodes) {
@@ -1091,15 +1155,42 @@ private:
     
     RCLCPP_INFO(this->get_logger(), "Projected %zu nodes to world coordinates", P.size());
     
-    // simple smoothing
+    // Conservative smoothing to avoid cutting corners
     auto S = P;
-    const double w_data = 0.5, w_smooth = 0.3;
-    for (int iter = 0; iter < 10; ++iter) {
+    const double w_data = 0.8, w_smooth = 0.2; // Increased data weight, reduced smooth weight
+    for (int iter = 0; iter < 5; ++iter) { // Reduced iterations from 10 to 5
       for (size_t i = 1; i + 1 < P.size(); ++i) {
-        S[i].first =
-            (w_data * P[i].first + w_smooth * (S[i - 1].first + S[i + 1].first)) / (w_data + 2.0 * w_smooth);
-        S[i].second =
-            (w_data * P[i].second + w_smooth * (S[i - 1].second + S[i + 1].second)) / (w_data + 2.0 * w_smooth);
+        // Check if smoothing would create collision
+        double smoothed_x = (w_data * P[i].first + w_smooth * (S[i - 1].first + S[i + 1].first)) / (w_data + 2.0 * w_smooth);
+        double smoothed_y = (w_data * P[i].second + w_smooth * (S[i - 1].second + S[i + 1].second)) / (w_data + 2.0 * w_smooth);
+        
+        // Check collision for smoothed point
+        int smoothed_idx = worldToIndex(smoothed_x, smoothed_y);
+        bool collision = false;
+        
+        if (smoothed_idx >= 0 && smoothed_idx < static_cast<int>(obstacle_.size())) {
+          // Check 3x3 neighborhood around smoothed point for safety
+          int mx = smoothed_idx % width_;
+          int my = smoothed_idx / width_;
+          
+          for (int dx = -1; dx <= 1; ++dx) {
+            for (int dy = -1; dy <= 1; ++dy) {
+              int check_idx = (my + dy) * width_ + (mx + dx);
+              if (check_idx >= 0 && check_idx < static_cast<int>(obstacle_.size()) && obstacle_[check_idx]) {
+                collision = true;
+                break;
+              }
+            }
+            if (collision) break;
+          }
+        }
+        
+        // Only apply smoothing if no collision detected
+        if (!collision) {
+          S[i].first = smoothed_x;
+          S[i].second = smoothed_y;
+        }
+        // If collision detected, keep original point
       }
     }
     return S;
@@ -1188,12 +1279,19 @@ private:
         type_indices[gvd_intersection_types_[i]].push_back(i);
       }
       
-      int marker_id = 2;
+      // Use fixed marker IDs to prevent accumulation
+      std::map<std::string, int> type_to_id = {
+        {"start_left", 2},
+        {"start_right", 3},
+        {"end_left", 4},
+        {"end_right", 5}
+      };
+      
       for (const auto& [type, indices] : type_indices) {
         visualization_msgs::msg::Marker intersection_marker;
         intersection_marker.header = h;
         intersection_marker.ns = ns_ + "_gvd_intersections_" + type;
-        intersection_marker.id = marker_id++;
+        intersection_marker.id = type_to_id[type];
         intersection_marker.type = visualization_msgs::msg::Marker::SPHERE_LIST;
         intersection_marker.action = visualization_msgs::msg::Marker::ADD;
         intersection_marker.scale.x = 0.3; // Large spheres
@@ -1235,11 +1333,12 @@ private:
       }
       
       // Add numbered text labels for each intersection showing visit order
-      for (size_t i = 0; i < gvd_intersections_.size(); ++i) {
+      // Use fixed IDs to prevent accumulation (max 20 intersections)
+      for (size_t i = 0; i < gvd_intersections_.size() && i < 20; ++i) {
         visualization_msgs::msg::Marker number_marker;
         number_marker.header = h;
         number_marker.ns = ns_ + "_intersection_numbers";
-        number_marker.id = 10 + static_cast<int>(i); // Start from ID 10
+        number_marker.id = 10 + static_cast<int>(i); // Fixed IDs from 10-29
         number_marker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
         number_marker.action = visualization_msgs::msg::Marker::ADD;
         number_marker.pose.position.x = gvd_intersections_[i].x;
@@ -1495,7 +1594,6 @@ private:
     // Add return path to origin (0, 0) after visiting all waypoints
     RCLCPP_INFO(this->get_logger(), "Adding return path to origin (0, 0)");
     
-    int origin_idx = worldToIndex(0.0, 0.0);
     int origin_gvd_node = findNearestNode(origin_idx);
     
     if (current_gvd_node != origin_gvd_node) {
@@ -1567,39 +1665,63 @@ private:
     // Generate 4 artificial intersections at 1.5m intervals
     double interval = 1.5; // 1.5m intervals
     
+    // Helper function to find nearest GVD node for artificial intersection
+    auto findNearestGVDForPoint = [this](const geometry_msgs::msg::Point& point) -> geometry_msgs::msg::Point {
+      int point_idx = worldToIndex(point.x, point.y);
+      int nearest_gvd_node = findNearestNode(point_idx);
+      
+      if (nearest_gvd_node >= 0 && nearest_gvd_node < static_cast<int>(voro_inds_.size())) {
+        int gvd_idx = voro_inds_[nearest_gvd_node];
+        geometry_msgs::msg::Point gvd_point;
+        gvd_point.x = origin_x_ + (gvd_idx % width_) * resolution_;
+        gvd_point.y = origin_y_ + (gvd_idx / width_) * resolution_;
+        gvd_point.z = point.z;
+        return gvd_point;
+      }
+      return point; // Fallback to original point if no GVD node found
+    };
+    
     // 1. Start right (1.5m from start point)
-    geometry_msgs::msg::Point start_right;
-    start_right.x = row.start_point.x + perp_dx * interval;
-    start_right.y = row.start_point.y + perp_dy * interval;
-    start_right.z = row.start_point.z;
+    geometry_msgs::msg::Point start_right_raw;
+    start_right_raw.x = row.start_point.x + perp_dx * interval;
+    start_right_raw.y = row.start_point.y + perp_dy * interval;
+    start_right_raw.z = row.start_point.z;
+    geometry_msgs::msg::Point start_right = findNearestGVDForPoint(start_right_raw);
     artificial_intersections.push_back({start_right, "start_right"});
     
     // 2. End right (1.5m from end point)
-    geometry_msgs::msg::Point end_right;
-    end_right.x = row.end_point.x + perp_dx * interval;
-    end_right.y = row.end_point.y + perp_dy * interval;
-    end_right.z = row.end_point.z;
+    geometry_msgs::msg::Point end_right_raw;
+    end_right_raw.x = row.end_point.x + perp_dx * interval;
+    end_right_raw.y = row.end_point.y + perp_dy * interval;
+    end_right_raw.z = row.end_point.z;
+    geometry_msgs::msg::Point end_right = findNearestGVDForPoint(end_right_raw);
     artificial_intersections.push_back({end_right, "end_right"});
     
     // 3. End left (1.5m from end point, opposite direction)
-    geometry_msgs::msg::Point end_left;
-    end_left.x = row.end_point.x - perp_dx * interval;
-    end_left.y = row.end_point.y - perp_dy * interval;
-    end_left.z = row.end_point.z;
+    geometry_msgs::msg::Point end_left_raw;
+    end_left_raw.x = row.end_point.x - perp_dx * interval;
+    end_left_raw.y = row.end_point.y - perp_dy * interval;
+    end_left_raw.z = row.end_point.z;
+    geometry_msgs::msg::Point end_left = findNearestGVDForPoint(end_left_raw);
     artificial_intersections.push_back({end_left, "end_left"});
     
     // 4. Start left (1.5m from start point, opposite direction)
-    geometry_msgs::msg::Point start_left;
-    start_left.x = row.start_point.x - perp_dx * interval;
-    start_left.y = row.start_point.y - perp_dy * interval;
-    start_left.z = row.start_point.z;
+    geometry_msgs::msg::Point start_left_raw;
+    start_left_raw.x = row.start_point.x - perp_dx * interval;
+    start_left_raw.y = row.start_point.y - perp_dy * interval;
+    start_left_raw.z = row.start_point.z;
+    geometry_msgs::msg::Point start_left = findNearestGVDForPoint(start_left_raw);
     artificial_intersections.push_back({start_left, "start_left"});
     
     RCLCPP_INFO(this->get_logger(), "Generated artificial intersections for row:");
-    RCLCPP_INFO(this->get_logger(), "  Start right: (%.3f, %.3f)", start_right.x, start_right.y);
-    RCLCPP_INFO(this->get_logger(), "  End right: (%.3f, %.3f)", end_right.x, end_right.y);
-    RCLCPP_INFO(this->get_logger(), "  End left: (%.3f, %.3f)", end_left.x, end_left.y);
-    RCLCPP_INFO(this->get_logger(), "  Start left: (%.3f, %.3f)", start_left.x, start_left.y);
+    RCLCPP_INFO(this->get_logger(), "  Row orientation: %.3f rad (%.1f deg)", row.orientation, row.orientation * 180.0 / M_PI);
+    RCLCPP_INFO(this->get_logger(), "  Perpendicular direction: (%.3f, %.3f)", perp_dx, perp_dy);
+    RCLCPP_INFO(this->get_logger(), "  Interval distance: %.3f m", interval);
+    RCLCPP_INFO(this->get_logger(), "  Start right: raw(%.3f, %.3f) -> GVD(%.3f, %.3f)", start_right_raw.x, start_right_raw.y, start_right.x, start_right.y);
+    RCLCPP_INFO(this->get_logger(), "  End right: raw(%.3f, %.3f) -> GVD(%.3f, %.3f)", end_right_raw.x, end_right_raw.y, end_right.x, end_right.y);
+    RCLCPP_INFO(this->get_logger(), "  End left: raw(%.3f, %.3f) -> GVD(%.3f, %.3f)", end_left_raw.x, end_left_raw.y, end_left.x, end_left.y);
+    RCLCPP_INFO(this->get_logger(), "  Start left: raw(%.3f, %.3f) -> GVD(%.3f, %.3f)", start_left_raw.x, start_left_raw.y, start_left.x, start_left.y);
+    RCLCPP_INFO(this->get_logger(), "  Total artificial intersections: %zu", artificial_intersections.size());
     
     return artificial_intersections;
   }
@@ -1689,25 +1811,29 @@ private:
     perpendicular_lines_end_right_.push_back(end_right);
     
     // Add valid intersections with their types
-    if (start_left_intersection.x != 0.0 || start_left_intersection.y != 0.0) {
+    // Check if intersection is valid by checking if it's not the default (0,0,0) point
+    // or if it's at a reasonable distance from the reference point
+    double min_valid_distance = 0.1; // Minimum distance to consider intersection valid
+    
+    if (std::hypot(start_left_intersection.x - row.start_point.x, start_left_intersection.y - row.start_point.y) >= min_valid_distance) {
       intersections.push_back({start_left_intersection, "start_left"});
       RCLCPP_INFO(this->get_logger(), "Start left intersection: (%.3f, %.3f)", 
                   start_left_intersection.x, start_left_intersection.y);
     }
     
-    if (start_right_intersection.x != 0.0 || start_right_intersection.y != 0.0) {
+    if (std::hypot(start_right_intersection.x - row.start_point.x, start_right_intersection.y - row.start_point.y) >= min_valid_distance) {
       intersections.push_back({start_right_intersection, "start_right"});
       RCLCPP_INFO(this->get_logger(), "Start right intersection: (%.3f, %.3f)", 
                   start_right_intersection.x, start_right_intersection.y);
     }
     
-    if (end_left_intersection.x != 0.0 || end_left_intersection.y != 0.0) {
+    if (std::hypot(end_left_intersection.x - row.end_point.x, end_left_intersection.y - row.end_point.y) >= min_valid_distance) {
       intersections.push_back({end_left_intersection, "end_left"});
       RCLCPP_INFO(this->get_logger(), "End left intersection: (%.3f, %.3f)", 
                   end_left_intersection.x, end_left_intersection.y);
     }
     
-    if (end_right_intersection.x != 0.0 || end_right_intersection.y != 0.0) {
+    if (std::hypot(end_right_intersection.x - row.end_point.x, end_right_intersection.y - row.end_point.y) >= min_valid_distance) {
       intersections.push_back({end_right_intersection, "end_right"});
       RCLCPP_INFO(this->get_logger(), "End right intersection: (%.3f, %.3f)", 
                   end_right_intersection.x, end_right_intersection.y);
@@ -1715,10 +1841,10 @@ private:
     
     RCLCPP_INFO(this->get_logger(), "Found %zu intersections for tree row (start_left: %s, start_right: %s, end_left: %s, end_right: %s)", 
                 intersections.size(),
-                (start_left_intersection.x != 0.0 || start_left_intersection.y != 0.0) ? "yes" : "no",
-                (start_right_intersection.x != 0.0 || start_right_intersection.y != 0.0) ? "yes" : "no",
-                (end_left_intersection.x != 0.0 || end_left_intersection.y != 0.0) ? "yes" : "no",
-                (end_right_intersection.x != 0.0 || end_right_intersection.y != 0.0) ? "yes" : "no");
+                (std::hypot(start_left_intersection.x - row.start_point.x, start_left_intersection.y - row.start_point.y) >= min_valid_distance) ? "yes" : "no",
+                (std::hypot(start_right_intersection.x - row.start_point.x, start_right_intersection.y - row.start_point.y) >= min_valid_distance) ? "yes" : "no",
+                (std::hypot(end_left_intersection.x - row.end_point.x, end_left_intersection.y - row.end_point.y) >= min_valid_distance) ? "yes" : "no",
+                (std::hypot(end_right_intersection.x - row.end_point.x, end_right_intersection.y - row.end_point.y) >= min_valid_distance) ? "yes" : "no");
     
     return intersections;
   }
@@ -1731,6 +1857,7 @@ private:
       double /* direction */) {
     
     geometry_msgs::msg::Point result; // Default (0,0,0) means no intersection found
+    bool found_valid = false;
     
     for (const auto& intersection : intersections) {
       double distance = std::hypot(intersection.x - reference_point.x, intersection.y - reference_point.y);
@@ -1739,8 +1866,9 @@ private:
       if (distance >= min_distance) {
         // For backward direction (-1.0), we want the closest intersection that's far enough
         // For forward direction (1.0), we want the closest intersection that's far enough
-        if (result.x == 0.0 && result.y == 0.0) {
+        if (!found_valid) {
           result = intersection; // First valid intersection
+          found_valid = true;
         } else {
           // Keep the closest valid intersection
           double current_distance = std::hypot(result.x - reference_point.x, result.y - reference_point.y);
@@ -1839,6 +1967,13 @@ private:
     // Process each tree row
     for (size_t i = 0; i < sorted_rows.size(); ++i) {
       const auto& row = sorted_rows[i];
+      
+      // Check if tree row is within exploration area
+      if (!isTreeRowInExplorationArea(row)) {
+        RCLCPP_INFO(this->get_logger(), "Skipping tree row %zu - outside exploration area", i+1);
+        continue;
+      }
+      
       std::string pattern = (i % 2 == 0) ? "start_right->end_right->end_left->start_left" : "end_right->start_right->start_left->end_left";
       RCLCPP_INFO(this->get_logger(), "Processing tree row %zu: %d trees, orientation: %.3f rad, pattern: %s", 
                   i+1, row.tree_count, row.orientation, pattern.c_str());
@@ -1957,7 +2092,6 @@ private:
     // Add return path to origin (0, 0) after visiting all intersections
     RCLCPP_INFO(this->get_logger(), "Adding return path to origin (0, 0)");
     
-    int origin_idx = worldToIndex(0.0, 0.0);
     int origin_gvd_node = findNearestNode(origin_idx);
     
     if (current_gvd_node != origin_gvd_node) {

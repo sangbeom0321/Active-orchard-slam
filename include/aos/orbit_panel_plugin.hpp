@@ -81,6 +81,8 @@ private slots:
     void onResetExploration();
     void onParameterChanged();
     void onUpdateStatus();
+    void onSaveDefaults();
+    void onLoadDefaults();
 
 private:
     // ROS2 communication
@@ -196,6 +198,10 @@ private:
     // GVD Topology parameters
     QSpinBox* connect_radius_spin_;
     
+    // Default parameters buttons
+    QPushButton* save_defaults_btn_;
+    QPushButton* load_defaults_btn_;
+    
     // Data
     std::vector<geometry_msgs::msg::Point> waypoints_;
     std::vector<geometry_msgs::msg::Point> polygon_points_;
@@ -238,6 +244,8 @@ private:
     void connectSignals();
     void loadParameters();
     void saveParameters();
+    void saveDefaultParameters(const std::string& filename);
+    void loadDefaultParameters(const std::string& filename);
     
     // ROS2 setup
     void setupROS2();

@@ -5,6 +5,8 @@
 
 AOS is a ROS2-based system for autonomous exploration and monitoring in orchard environments. Integrated with LIO-SAM SLAM, it detects tree rows without prior maps and performs systematic exploration through Generalized Voronoi Diagram (GVD) based path planning.
 
+![UGV Platform](images/ugv_pic.png)
+
 ## 📋 Table of Contents
 
 - [Key Features](#key-features)
@@ -34,6 +36,8 @@ AOS is a ROS2-based system for autonomous exploration and monitoring in orchard 
 - **Docking State Management**: Waits for docking completion upon waypoint arrival and automatically resumes
 
 ## 🏗️ System Architecture
+
+![System Overview](images/overview.png)
 
 ### Node Structure
 
@@ -98,6 +102,8 @@ AOS is a ROS2-based system for autonomous exploration and monitoring in orchard 
 5. **aos_path_gen_node** → Plans paths between waypoints using GVD graph
 6. **aos_path_linearization_node** → Splits path into linear segments
 7. **aos_state_machine_node** → Determines control mode based on robot state
+
+![Orchard Mapping Result](images/orchard_mapped.png)
 
 ## 📦 Installation
 
@@ -229,6 +235,14 @@ Processes point clouds to detect tree rows and generate Voronoi seeds.
 - Tree row cluster detection and analysis
 - Voronoi seed generation (tree row start/end points, confirmed tree locations)
 
+![2D Grid with Inflation](images/2d_grid_inflation.png)
+
+*Occupancy grid with obstacle inflation for safe path planning*
+
+![Skeletonized Grid](images/2d_grid_skeleton.png)
+
+*Skeletonized occupancy grid showing tree row centerlines*
+
 #### Input Topics
 | Topic Name | Type | Description |
 |------------|------|-------------|
@@ -286,6 +300,10 @@ Generates Generalized Voronoi Diagram (GVD) graph from Voronoi seeds.
 - GVD boundary point labeling around cluster endpoints (TL/TR/BL/BR)
 - Graph visualization marker generation
 
+![Voronoi Diagram Results](images/voronoi_results.png)
+
+*Voronoi diagram computed from tree row seeds*
+
 #### Input Topics
 | Topic Name | Type | Description |
 |------------|------|-------------|
@@ -330,6 +348,10 @@ Plans paths between waypoints using GVD graph.
 - Docking state management (waits for docking completion at waypoint arrival)
 - Return to origin path generation after exploration completion
 - Map saving service calls
+
+![Final GVD Graph](images/final_graph.png)
+
+*Complete GVD graph with planned path and waypoints*
 
 #### Input Topics
 | Topic Name | Type | Description |

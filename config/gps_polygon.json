@@ -1,0 +1,23 @@
+{
+    "name": "GPS Polygon",
+    "points": [
+        {
+            "latitude": 36.111496525,
+            "longitude": 128.64212322
+        },
+        {
+            "latitude": 36.11143795,
+            "longitude": 128.64206319
+        },
+        {
+            "latitude": 36.111877345,
+            "longitude": 128.64147661
+        },
+        {
+            "latitude": 36.11193353,
+            "longitude": 128.64153517333332
+        }
+    ],
+    "timestamp": "2025-10-12T13:26:04",
+    "type": "gps_polygon"
+}

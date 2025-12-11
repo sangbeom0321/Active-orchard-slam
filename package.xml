@@ -8,14 +8,17 @@
   <maintainer email="bluekds@koreatech.ac.kr">Duksu Kim</maintainer>
   <license>MIT</license>
   
-  <url type="website">https://github.com/aomr/orbit_planner</url>
-  <url type="repository">https://github.com/aomr/orbit_planner</url>
-  <url type="bugtracker">https://github.com/aomr/orbit_planner/issues</url>
+  <url type="website">https://github.com/aomr/aos_planner</url>
+  <url type="repository">https://github.com/aomr/aos_planner</url>
+  <url type="bugtracker">https://github.com/aomr/aos_planner/issues</url>
   
   <author email="bluekds@koreatech.ac.kr">Sangbeom Woo</author>
   <author email="bluekds@koreatech.ac.kr">Duksu Kim</author>
   
   <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>rosidl_default_generators</buildtool_depend>
+  <exec_depend>rosidl_default_runtime</exec_depend>
+  <member_of_group>rosidl_interface_packages</member_of_group>
   
   <!-- ROS2 Core Dependencies -->
   <depend>rclcpp</depend>
@@ -31,6 +34,9 @@
   <depend>tf2_eigen</depend>
   <depend>std_srvs</depend>
   
+  <!-- LIO-SAM Dependencies -->
+  <depend>lio_sam_wo</depend>
+  
   <!-- PCL Dependencies -->
   <depend>pcl_ros</depend>
   <depend>pcl_conversions</depend>
@@ -40,6 +46,9 @@
   
   <!-- OpenCV Dependencies -->
   <depend>libopencv-dev</depend>
+  
+  <!-- GeographicLib Dependencies for GPS/UTM conversion -->
+  <depend>libgeographic-dev</depend>
   
   <!-- RViz Dependencies -->
   <depend>rviz_common</depend>
@@ -57,6 +66,6 @@
   
   <export>
     <build_type>ament_cmake</build_type>
-    <rviz plugin="${prefix}/rviz/orbit_panel_plugin.xml"/>
+    <rviz plugin="${prefix}/rviz/aos_panel_plugin.xml"/>
   </export>
 </package>

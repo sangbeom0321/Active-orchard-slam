@@ -1,0 +1,89 @@
+/**:
+  ros__parameters:
+    # ========================================================================
+    # aos_gvd_node Parameters
+    # ========================================================================
+    max_graph_publish_rate: 10.0  # Maximum graph publish rate (Hz)
+    
+    # Input Topics
+    voronoi_seeds_topic: "/voronoi_seeds"  # Voronoi seeds topic
+    exploration_tree_rows_info_topic: "/exploration_tree_rows_info"  # Exploration tree rows info topic
+    tree_rows_all_topic: "/tree_rows_all"  # All tree rows topic
+    skeletonized_occupancy_grid_topic: "/skeletonized_occupancy_grid"  # Skeletonized occupancy grid topic
+    occupancy_grid_topic: "/occupancy_grid"  # Occupancy grid topic
+    robot_position_topic: "/Local/utm"  # Robot position topic (UTM coordinates)
+    
+    # ========================================================================
+    # aos_path_gen_node Parameters
+    # ========================================================================
+    gvd_graph_topic: "/gvd/graph"  # GVD graph topic name
+    publish_namespace: "gvd_cluster_planning"  # Namespace for published markers
+    debug_mode: false  # Enable debug mode for detailed logging
+    
+    # Input Topics
+    current_pos_topic: "/Local/utm"  # Current robot position topic (UTM coordinates)
+    control_mod_topic: "/Control/mod"  # Control mode topic
+    skeletonized_grid_topic: "/skeletonized_occupancy_grid"  # Skeletonized occupancy grid topic
+    
+    # ========================================================================
+    # aos_path_linearization_node Parameters
+    # ========================================================================
+    input_path_topic: "/aos/path"  # Input path topic name
+    output_path_topic: "/plan"  # Output path topic name
+    
+    # ========================================================================
+    # aos_state_machine_node Parameters
+    # ========================================================================
+    # Input Topics
+    path_topic: "/plan"  # Path topic name
+    lidar_odom_topic: "/odometry/imu"  # LiDAR odometry topic
+    base_link_odom_topic: "/odom_baselink"  # Base link odometry topic
+    
+    # Output Topics
+    control_mod_topic: "/Control/mod"  # Control mode topic
+    goal_point_topic: "/Planning/goal_point"  # Goal point topic
+    
+    # ========================================================================
+    # aos_seed_gen_node Parameters
+    # ========================================================================
+    # Input Topics
+    global_map_topic: "/lio_sam/mapping/global_map"  # Global map point cloud topic
+    exploration_area_topic: "/aos_planner/exploration_area"  # Exploration area polygon topic
+    robot_position_topic: "/Local/utm"  # Robot position topic (UTM coordinates)
+    
+    # Point Cloud Clipping Parameters (Bounding Box Filtering)
+    clipping_minx: -5.0  # Minimum X coordinate for clipping (meters)
+    clipping_maxx: 72.0  # Maximum X coordinate for clipping (meters)
+    clipping_miny: -10.0  # Minimum Y coordinate for clipping (meters)
+    clipping_maxy: 20.0  # Maximum Y coordinate for clipping (meters)
+    
+    # Grid Map Parameters
+    grid_resolution: 0.05  # Grid resolution (meters)
+    inflation_radius: 0.8  # Inflation radius for obstacles (meters)
+    
+    # Waypoint Parameters
+    waypoint_offset_distance: 2.4  # Waypoint offset distance (meters)
+    waypoint_offset_distance_x: 2.0  # Waypoint offset distance in X direction (meters)
+    waypoint_offset_distance_y: 2.4  # Waypoint offset distance in Y direction (meters)
+    
+    # Cluster Merging Parameters
+    cluster_merge_enabled: true  # Enable cluster merging
+    cluster_merge_angle_deg: 30.0  # Maximum angle difference for cluster merging (degrees)
+    cluster_merge_max_perp_dist: 2.0  # Maximum perpendicular distance for cluster merging (meters)
+    cluster_merge_max_gap: 15.0  # Maximum gap between clusters for merging (meters)
+    
+    # Cluster Visualization Parameters
+    publish_cluster_axes: true  # Publish cluster axis markers
+    cluster_axis_scale: 1.0  # Scale factor for cluster axis visualization
+    cluster_axis_width: 0.08  # Width of cluster axis lines
+    cluster_min_length: 2.0  # Minimum cluster length to be considered valid (meters)
+
+# ========================================================================
+# Node-specific parameter overrides
+# ========================================================================
+# Note: clipping_minz and clipping_maxz have different values for different nodes
+
+/aos_seed_gen_node:
+  ros__parameters:
+    clipping_minz: -0.4  # Minimum Z coordinate for clipping (meters) - seed gen node
+    clipping_maxz: 0.5  # Maximum Z coordinate for clipping (meters) - seed gen node

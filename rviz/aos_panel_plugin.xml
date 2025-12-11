@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<library path="aos_panel_plugin">
+  <class name="aos_planner/AosPanelPlugin" type="aos_planner::AosPanelPlugin" base_class_type="rviz_common::Panel">
+    <description>AOS Panel Plugin for autonomous orchard exploration</description>
+  </class>
+</library>

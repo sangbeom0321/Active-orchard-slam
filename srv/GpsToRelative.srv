@@ -1,0 +1,14 @@
+# GPS 경도/위도를 상대 좌표로 변환하는 서비스
+# Request
+float64[] longitudes    # GPS 경도 배열
+float64[] latitudes     # GPS 위도 배열
+---
+# Response
+bool success            # 전체 변환 성공 여부
+string message          # 오류 메시지 (실패 시)
+float64[] relative_x    # UTM 원점 기준 상대 x 좌표 배열
+float64[] relative_y    # UTM 원점 기준 상대 y 좌표 배열
+float64[] base_x        # base_link 좌표계 x 좌표 배열 (RT 변환 사용)
+float64[] base_y        # base_link 좌표계 y 좌표 배열 (RT 변환 사용)
+bool[] conversion_success  # 각 좌표의 변환 성공 여부 배열
+

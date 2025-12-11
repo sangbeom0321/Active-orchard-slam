@@ -1,373 +1,808 @@
-# Orbit Planner Package
+# AOS (Active Orchard SLAM) - Autonomous Orchard Exploration and Monitoring System
 
-A ROS2 package for autonomous exploration and monitoring in orchard environments using orbit-based navigation strategies.
+[![ROS2](https://img.shields.io/badge/ROS2-Humble-blue.svg)](https://docs.ros.org/en/humble/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-## Overview
+AOS is a ROS2-based system for autonomous exploration and monitoring in orchard environments. Integrated with LIO-SAM SLAM, it detects tree rows without prior maps and performs systematic exploration through Generalized Voronoi Diagram (GVD) based path planning.
 
-Orbit Planner is an autonomous exploration system designed specifically for orchard environments. It combines frontier-based exploration with tree row detection and orbit-based monitoring to ensure systematic coverage of orchard rows. The system integrates with LIO-SAM SLAM and 4-wheel steering control systems for complete autonomous operation.
+## 📋 Table of Contents
 
-## Key Features
+- [Key Features](#key-features)
+- [System Architecture](#system-architecture)
+- [Installation](#installation)
+- [Node Descriptions](#node-descriptions)
+- [Usage](#usage)
+- [Parameter Configuration](#parameter-configuration)
+- [API Reference](#api-reference)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
+
+## 🎯 Key Features
 
 ### Core Capabilities
-- **Tree Clustering & Row Detection**: PCL-based point cloud clustering with PCA for tree row orientation
-- **Frontier-based Exploration**: Automatic detection of unexplored area boundaries
-- **Orbit Anchor Generation**: 4-anchor system (Front, Back, Left, Right) for systematic row monitoring
-- **Path Planning**: A* algorithm with ESDF-based collision avoidance
-- **RViz2 Integration**: Interactive GUI for exploration area selection and monitoring
-- **Real-time Performance**: Multi-threaded architecture for onboard operation
+- **Tree Row Detection**: Clusters individual trees from point clouds and automatically recognizes row structures
+- **GVD-based Path Planning**: Generates safe paths using Generalized Voronoi Diagram
+- **Autonomous Exploration**: Systematic waypoint traversal within exploration areas
+- **GPS/UTM Conversion**: Converts GPS coordinates to UTM coordinate system for SLAM integration
+- **State Machine Control**: Automatic mode switching between path following, precise control, semi-precise control, and stop modes
+- **RViz2 Integration**: Real-time visualization and interactive control panel
 
 ### Orchard-Specific Features
-- **Tree Detection**: Individual tree identification and position estimation from point clouds
-- **Row Structure Analysis**: Automatic recognition and analysis of orchard row patterns
-- **Systematic Monitoring**: Row-by-row coverage with minimal blind spots
-- **Adaptive Planning**: Dynamic strategy adjustment based on environmental structure
+- **Skeletonization**: Skeletonizes occupancy grids to extract tree row centerlines
+- **Voronoi Seed Generation**: Generates Voronoi seeds based on tree row start/end points and confirmed tree locations
+- **Cluster-based Waypoints**: Uses TL/TR/BL/BR points of each tree row cluster as waypoints
+- **Docking State Management**: Waits for docking completion upon waypoint arrival and automatically resumes
 
-### Advanced Features
-- **Voxblox Integration**: TSDF/ESDF mapping for real-time 3D environment representation
-- **TSP Scheduling**: Traveling Salesman Problem optimization for efficient anchor sequencing
-- **Receding Horizon Planning**: Short-term sequence evaluation for adaptive exploration
-- **Multi-threaded Architecture**: Parallel processing for real-time performance
+## 🏗️ System Architecture
 
-## System Architecture
+### Node Structure
 
-### Core Components
-
-1. **orbit_planner_node**: Main planner node handling exploration logic
-2. **orbit_voxblox_interface**: Voxblox library interface for TSDF/ESDF mapping
-3. **tree_clusterer**: Tree detection and row structure analysis
-4. **frontier_detector**: Unexplored area boundary detection
-5. **path_planner**: A* path planning with collision avoidance
-6. **orbit_anchor_generator**: 4-anchor generation for systematic monitoring
-7. **orbit_panel_plugin**: RViz2 panel plugin for interactive control
+```
+┌─────────────────┐
+│  LIO-SAM SLAM   │
+│  (External)     │
+└────────┬────────┘
+         │ Point Cloud
+         ▼
+┌─────────────────────┐
+│  gps_to_utm_node    │◄─── GPS (NavSatFix)
+│  GPS → UTM          │
+└──────────┬──────────┘
+           │ Exploration Area (PolygonStamped)
+           ▼
+┌─────────────────────┐
+│  aos_seed_gen_node  │◄─── Global Map (PointCloud2)
+│  Tree Row Detection │
+│  Voronoi Seed Gen   │
+└──────────┬──────────┘
+           │ Voronoi Seeds, Tree Rows
+           ▼
+┌─────────────────────┐
+│   aos_gvd_node      │◄─── Occupancy Grid
+│   GVD Graph Gen     │
+└──────────┬──────────┘
+           │ GVD Graph
+           ▼
+┌─────────────────────┐
+│  aos_path_gen_node  │◄─── Robot Position, Control Mode
+│  Path Planning      │
+└──────────┬──────────┘
+           │ Path
+           ▼
+┌─────────────────────┐
+│aos_path_linearization│
+│      _node          │
+│  Path Linearization │
+└──────────┬──────────┘
+           │ Linearized Path
+           ▼
+┌─────────────────────┐
+│aos_state_machine_node│◄─── Odometry
+│  State Machine      │
+└──────────┬──────────┘
+           │ Control Mode, Goal Point
+           ▼
+      Control System
+```
 
 ### Data Flow
 
-```
-LIO-SAM → Voxblox Interface → Planner Node → Control System
-    ↓              ↓              ↓
-Point Cloud → TSDF/ESDF → Tree Detection → Row Analysis
-    ↓              ↓              ↓
-Occupancy Grid → Frontier Detection → Anchor Generation
-    ↓              ↓              ↓
-Path Planning → TSP Scheduling → Trajectory Execution
-```
+1. **LIO-SAM** → Generates point cloud
+2. **gps_to_utm_node** → Converts GPS coordinates to UTM and defines exploration area
+3. **aos_seed_gen_node** → Processes point cloud to:
+   - Generate occupancy grid
+   - Perform skeletonization
+   - Detect tree row clusters
+   - Generate Voronoi seeds
+4. **aos_gvd_node** → Generates GVD graph from Voronoi seeds
+5. **aos_path_gen_node** → Plans paths between waypoints using GVD graph
+6. **aos_path_linearization_node** → Splits path into linear segments
+7. **aos_state_machine_node** → Determines control mode based on robot state
 
-## Installation and Build
-
-### Dependencies
-
-- **ROS2 Humble**
-- **Voxblox**: TSDF/ESDF mapping library
-- **PCL**: Point Cloud Library for 3D processing
-- **RViz2**: Visualization tools
-- **Eigen3**: Linear algebra library
-- **OpenCV**: Computer vision library (optional)
-- **tf2**: Transform library
+## 📦 Installation
 
 ### System Requirements
 
-- Ubuntu 22.04 LTS
-- ROS2 Humble
-- Minimum 8GB RAM
-- NVIDIA GPU (recommended for Voxblox)
+- **OS**: Ubuntu 22.04 LTS
+- **ROS2**: Humble Hawksbill
+- **Memory**: Minimum 8GB RAM (Recommended: 16GB)
+- **GPU**: NVIDIA GPU (Recommended for Voxblox)
 
-### Installation
+### Dependency Installation
 
-1. **Install ROS2 Humble** (if not already installed):
+#### 1. Install ROS2 Humble
+
 ```bash
+# Install ROS2 Humble on Ubuntu 22.04
+sudo apt update
+sudo apt install software-properties-common
+sudo add-apt-repository universe
+sudo apt update && sudo apt install curl -y
+sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | sudo apt-key add -
 sudo apt update
 sudo apt install ros-humble-desktop
 ```
 
-2. **Install dependencies**:
+#### 2. Install System Dependencies
+
 ```bash
-sudo apt install ros-humble-pcl-ros ros-humble-pcl-conversions
-sudo apt install ros-humble-rviz2 ros-humble-tf2-eigen
-sudo apt install libpcl-dev libeigen3-dev libopencv-dev
+# ROS2 package dependencies
+sudo apt install \
+  ros-humble-pcl-ros \
+  ros-humble-pcl-conversions \
+  ros-humble-rviz2 \
+  ros-humble-tf2-eigen \
+  ros-humble-tf2-geometry-msgs \
+  ros-humble-visualization-msgs \
+  ros-humble-nav-msgs \
+  ros-humble-sensor-msgs \
+  ros-humble-geometry-msgs
+
+# System libraries
+sudo apt install \
+  libpcl-dev \
+  libeigen3-dev \
+  libopencv-dev \
+  libgeographic-dev \
+  qtbase5-dev \
+  libnlohmann-json3-dev
+
+# GeographicLib (for GPS/UTM conversion)
+sudo apt install libgeographic-dev
 ```
 
-3. **Clone and build**:
+#### 3. LIO-SAM Dependency
+
+This package depends on `lio_sam_wo`. You must install LIO-SAM first:
+
 ```bash
-# Navigate to your ROS2 workspace
+# Install LIO-SAM (example)
+cd ~/ros2_ws/src
+git clone <lio_sam_wo_repository_url>
 cd ~/ros2_ws
+rosdep install --from-paths src --ignore-src -r -y
+colcon build --packages-select lio_sam_wo
+```
 
-# Clone the package (if using git)
-# git clone <repository_url> src/aomr/orbit_planner
+#### 4. Build AOS Package
 
-# Build the package
-colcon build --packages-select orbit_planner
+```bash
+# Navigate to workspace
+cd ~/ros2_ws/src
 
-# Source the workspace
+# Clone AOS package (or copy)
+# git clone <repository_url> aos
+
+# Install dependencies
+cd ~/ros2_ws
+rosdep install --from-paths src --ignore-src -r -y
+
+# Build
+colcon build --packages-select aos
+
+# Source environment
 source install/setup.bash
 ```
 
-## Usage
+## 🔧 Node Descriptions
 
-### Quick Start
+### 1. gps_to_utm_node
+
+Converts GPS coordinates to UTM coordinate system and defines exploration area.
+
+#### Features
+- Converts GPS (latitude/longitude) to UTM coordinates
+- Calculates transformation matrix with base_link coordinate system
+- Reads GPS polygon from JSON file and converts it
+- Publishes exploration area polygon
+
+#### Input Topics
+| Topic Name | Type | Description |
+|------------|------|-------------|
+| `/fix` | `sensor_msgs/msg/NavSatFix` | GPS satellite position information |
+| `/odom_baselink` | `nav_msgs/msg/Odometry` | base_link coordinate system odometry |
+
+#### Output Topics
+| Topic Name | Type | Description |
+|------------|------|-------------|
+| `/aos_planner/exploration_area` | `geometry_msgs/msg/PolygonStamped` | Exploration area polygon (UTM coordinates) |
+
+#### Key Parameters
+```yaml
+utm_zone: 52                    # UTM zone number
+gps_offset_x: -0.65            # GPS antenna offset (X)
+gps_offset_y: 0.55             # GPS antenna offset (Y)
+timestamp_offset: 19379697.032363  # GPS timestamp offset
+gps_polygon_json_path: "/path/to/gps_polygon.json"  # GPS polygon JSON file path
+```
+
+---
+
+### 2. aos_seed_gen_node
+
+Processes point clouds to detect tree rows and generate Voronoi seeds.
+
+#### Features
+- Point cloud filtering and clipping
+- 2D occupancy grid generation
+- Tree row centerline extraction through skeletonization
+- Tree row cluster detection and analysis
+- Voronoi seed generation (tree row start/end points, confirmed tree locations)
+
+#### Input Topics
+| Topic Name | Type | Description |
+|------------|------|-------------|
+| `/lio_sam/mapping/global_map` | `sensor_msgs/msg/PointCloud2` | LIO-SAM global map point cloud |
+| `/aos_planner/exploration_area` | `geometry_msgs/msg/PolygonStamped` | Exploration area polygon |
+| `/Local/utm` | `std_msgs/msg/Float64MultiArray` | Robot current position (UTM coordinates) |
+
+#### Output Topics
+| Topic Name | Type | Description |
+|------------|------|-------------|
+| `/occupancy_grid` | `nav_msgs/msg/OccupancyGrid` | 2D occupancy grid map |
+| `/skeletonized_occupancy_grid` | `nav_msgs/msg/OccupancyGrid` | Skeletonized occupancy grid |
+| `/voronoi_seeds` | `geometry_msgs/msg/PoseArray` | Voronoi seed position array |
+| `/tree_rows_all` | `visualization_msgs/msg/MarkerArray` | All tree rows visualization |
+| `/tree_rows_exploration` | `visualization_msgs/msg/MarkerArray` | Tree rows in exploration area visualization |
+| `/exploration_tree_rows_info` | `geometry_msgs/msg/PoseArray` | Exploration area tree row information (start/end points) |
+| `/skeleton_clusters` | `visualization_msgs/msg/MarkerArray` | Skeleton cluster visualization |
+| `/filtered_confirmed_trees` | `geometry_msgs/msg/PoseArray` | Filtered confirmed tree locations |
+
+#### Key Parameters
+```yaml
+# Point cloud clipping
+clipping_minz: -0.4            # Minimum Z value (meters)
+clipping_maxz: 0.5             # Maximum Z value (meters)
+clipping_minx: -5.0            # Minimum X value (meters)
+clipping_maxx: 72.0             # Maximum X value (meters)
+clipping_miny: -10.0           # Minimum Y value (meters)
+clipping_maxy: 20.0            # Maximum Y value (meters)
+
+# Grid map parameters
+grid_resolution: 0.05           # Grid resolution (meters)
+inflation_radius: 0.8          # Obstacle inflation radius (meters)
+
+# Waypoint parameters
+waypoint_offset_distance: 2.4  # Waypoint offset distance (meters)
+waypoint_offset_distance_x: 2.0 # X direction offset (meters)
+waypoint_offset_distance_y: 2.4 # Y direction offset (meters)
+
+# Cluster parameters
+cluster_min_length: 2.0         # Minimum cluster length (meters)
+cluster_merge_enabled: true     # Enable cluster merging
+cluster_merge_angle_deg: 30.0   # Merge tolerance angle (degrees)
+```
+
+---
+
+### 3. aos_gvd_node
+
+Generates Generalized Voronoi Diagram (GVD) graph from Voronoi seeds.
+
+#### Features
+- Voronoi diagram computation
+- GVD boundary point extraction
+- Graph structure generation (nodes and edges)
+- GVD boundary point labeling around cluster endpoints (TL/TR/BL/BR)
+- Graph visualization marker generation
+
+#### Input Topics
+| Topic Name | Type | Description |
+|------------|------|-------------|
+| `/voronoi_seeds` | `geometry_msgs/msg/PoseArray` | Voronoi seed position array |
+| `/exploration_tree_rows_info` | `geometry_msgs/msg/PoseArray` | Exploration area tree row information |
+| `/tree_rows_all` | `visualization_msgs/msg/MarkerArray` | All tree row markers |
+| `/skeletonized_occupancy_grid` | `nav_msgs/msg/OccupancyGrid` | Skeletonized occupancy grid |
+| `/occupancy_grid` | `nav_msgs/msg/OccupancyGrid` | Occupancy grid map |
+| `/Local/utm` | `std_msgs/msg/Float64MultiArray` | Robot current position |
+| `/aos/docking_state` | `std_msgs/msg/Bool` | Docking state |
+
+#### Output Topics
+| Topic Name | Type | Description |
+|------------|------|-------------|
+| `/gvd/graph` | `aos/msg/GvdGraph` | GVD graph message |
+| `/gvd/markers` | `visualization_msgs/msg/MarkerArray` | GVD graph visualization markers |
+
+#### Key Parameters
+```yaml
+max_graph_publish_rate: 10.0    # Maximum graph publish rate (Hz)
+```
+
+#### GVD Graph Message Structure
+- **nodes**: Graph node positions (world coordinates)
+- **edges**: Edge connection information (node index pairs)
+- **edge_lengths**: Length of each edge
+- **edge_clearances**: Clearance of each edge (minimum distance to obstacles)
+- **node_labels**: Node labels (0=normal, 1=TL, 2=TR, 4=BL, 8=BR)
+- **node_label_clusters**: Cluster ID of node labels
+- **node_label_types**: Node label type (0=TL, 1=TR, 2=BL, 3=BR)
+
+---
+
+### 4. aos_path_gen_node
+
+Plans paths between waypoints using GVD graph.
+
+#### Features
+- Cluster-based waypoint generation (TL/TR/BL/BR)
+- Path planning using A* algorithm
+- Waypoint arrival detection and transition to next waypoint
+- Docking state management (waits for docking completion at waypoint arrival)
+- Return to origin path generation after exploration completion
+- Map saving service calls
+
+#### Input Topics
+| Topic Name | Type | Description |
+|------------|------|-------------|
+| `/gvd/graph` | `aos/msg/GvdGraph` | GVD graph |
+| `/Local/utm` | `std_msgs/msg/Float64MultiArray` | Robot current position |
+| `/Control/mod` | `std_msgs/msg/Int32` | Control mode (0=path following, 1=precise, 2=semi-precise, 3=stop) |
+| `/skeletonized_occupancy_grid` | `nav_msgs/msg/OccupancyGrid` | Skeletonized occupancy grid |
+
+#### Output Topics
+| Topic Name | Type | Description |
+|------------|------|-------------|
+| `/aos/path` | `nav_msgs/msg/Path` | Planned path |
+| `/aos/markers` | `visualization_msgs/msg/MarkerArray` | Path and waypoint visualization |
+| `/aos/current_cluster_index` | `std_msgs/msg/Int32` | Current cluster index |
+| `/aos/current_waypoint_index` | `std_msgs/msg/Int32` | Current waypoint index |
+| `/aos/path_planning_status` | `std_msgs/msg/String` | Path planning status |
+| `/aos/docking_state` | `std_msgs/msg/Bool` | Docking state |
+
+#### Services
+| Service Name | Type | Description |
+|--------------|------|-------------|
+| `/aos/next_waypoint` | `std_srvs/srv/Empty` | Force transition to next waypoint |
+
+#### Service Clients
+- `/lio_sam/save_map`: Map saving service call
+- `/gvd/save_cluster_info`: Cluster information saving service call
+
+#### Key Parameters
+```yaml
+gvd_graph_topic: "/gvd/graph"
+current_pos_topic: "/Local/utm"
+control_mod_topic: "/Control/mod"
+skeletonized_grid_topic: "/skeletonized_occupancy_grid"
+debug_mode: false
+log_level: "WARN"  # NONE, ERROR, WARN, INFO, DEBUG
+```
+
+---
+
+### 5. aos_path_linearization_node
+
+Splits path into linear segments and converts to a form optimized for control systems.
+
+#### Features
+- Splits path into maximum 4 linear segments
+- Finds optimal split points using linear regression
+- Interpolates path points at 5cm intervals
+- Calculates orientation angle for each segment
+
+#### Input Topics
+| Topic Name | Type | Description |
+|------------|------|-------------|
+| `/aos/path` | `nav_msgs/msg/Path` | Input path |
+
+#### Output Topics
+| Topic Name | Type | Description |
+|------------|------|-------------|
+| `/plan` | `nav_msgs/msg/Path` | Linearized path |
+
+#### Key Parameters
+```yaml
+input_path_topic: "/aos/path"
+output_path_topic: "/plan"
+```
+
+---
+
+### 6. aos_state_machine_node
+
+Automatically determines control mode based on robot state.
+
+#### Features
+- Path following mode (Mod 0): Distance to goal point is 0.5m or more
+- Semi-precise control mode (Mod 2): Distance to goal point is less than 0.5m
+- Precise control mode (Mod 1): When precise work is required
+- Stop mode (Mod 3): When goal point is reached
+
+#### Input Topics
+| Topic Name | Type | Description |
+|------------|------|-------------|
+| `/plan` | `nav_msgs/msg/Path` | Planned path |
+| `/odometry/imu` | `nav_msgs/msg/Odometry` | LiDAR odometry |
+| `/odom_baselink` | `nav_msgs/msg/Odometry` | base_link odometry |
+
+#### Output Topics
+| Topic Name | Type | Description |
+|------------|------|-------------|
+| `/Control/mod` | `std_msgs/msg/Int32` | Control mode (0/1/2/3) |
+| `/Planning/goal_point` | `std_msgs/msg/Float64MultiArray` | Goal point [x, y, yaw] |
+
+#### Key Parameters
+```yaml
+path_topic: "/plan"
+lidar_odom_topic: "/odometry/imu"
+base_link_odom_topic: "/odom_baselink"
+control_mod_topic: "/Control/mod"
+goal_point_topic: "/Planning/goal_point"
+```
+
+---
+
+### 7. aos_panel_plugin (RViz2 Panel)
+
+GUI panel for controlling and monitoring the system in RViz2.
+
+#### Features
+- Exploration area polygon definition
+- GPS coordinate input and conversion
+- Real-time parameter adjustment
+- Path and status monitoring
+- Map saving control
+- Remote control enable/disable
+
+#### Key Features
+- **GPS Polygon Load**: Read GPS coordinates from JSON file
+- **Parameter Editing**: Save/load parameters as YAML file
+- **Status Monitoring**: Display cluster index, waypoint index, path status
+- **Map Saving**: Save LIO-SAM map and cluster information
+
+## 🚀 Usage
+
+### Launch Complete System
 
 ```bash
-# Launch the complete system
-ros2 launch orbit_planner orbit_exploration.launch.py
+# Source workspace
+source ~/ros2_ws/install/setup.bash
+
+# Launch complete system (with LIO-SAM)
+ros2 launch aos run.launch.py
 
 # Launch without RViz2
-ros2 launch orbit_planner orbit_exploration.launch.py use_rviz:=false
+ros2 launch aos run.launch.py use_rviz:=false
+
+# Use simulation time
+ros2 launch aos run.launch.py use_sim_time:=true
 ```
 
-### Individual Node Execution
+### Run Individual Nodes
 
 ```bash
-# Run only the planner node
-ros2 run orbit_planner orbit_planner_node
+# GPS to UTM conversion node
+ros2 run aos gps_to_utm_node
 
-# Run with custom parameters
-ros2 run orbit_planner orbit_planner_node --ros-args -p robot_radius:=0.5 -p max_planning_distance:=100.0
+# Seed generation node
+ros2 run aos aos_seed_gen_node
+
+# GVD graph generation node
+ros2 run aos aos_gvd_node
+
+# Path planning node
+ros2 run aos aos_path_gen_node
+
+# Path linearization node
+ros2 run aos aos_path_linearization_node
+
+# State machine node
+ros2 run aos aos_state_machine_node
 ```
 
-### RViz2 Panel Usage
+### Using RViz2 Panel
 
 1. **Launch RViz2**:
-```bash
-ros2 run rviz2 rviz2 -d src/aomr/orbit_planner/rviz/orbit_planner.rviz
-```
+   ```bash
+   ros2 run rviz2 rviz2 -d ~/ros2_ws/src/aos/rviz/aos_planner.rviz
+   ```
 
-2. **Add the Orbit Planner Panel**:
-   - Go to `Panels` → `Add New Panel` → `Orbit Planner Panel`
-   - The panel will appear on the right side of RViz2
+2. **Add Panel**:
+   - `Panels` → `Add New Panel` → `AOS Panel Plugin`
 
 3. **Define Exploration Area**:
-   - Click "Start Point" to select the robot's starting position
-   - Click "Add Polygon Point" to enter polygon mode
-   - Click on the map to define exploration boundaries
-   - Click "Clear Polygon" to reset the area
+   - Load GPS polygon JSON file or
+   - Click polygon points directly in RViz2
 
-4. **Start Exploration**:
-   - Click "Start Exploration" to begin autonomous exploration
-   - Monitor progress in the status panel
-   - Click "Stop Exploration" to halt the system
+4. **Adjust Parameters**:
+   - Load/save parameter file from panel
+   - Real-time parameter updates
 
-### Testing the System
+### Topic Monitoring
 
-#### 1. **Unit Tests**
 ```bash
-# Run all tests
-colcon test --packages-select orbit_planner
+# List all AOS topics
+ros2 topic list | grep aos
 
-# Run specific test
-ros2 test src/aomr/orbit_planner/test/test_orbit_planner.cpp
+# Monitor path
+ros2 topic echo /aos/path
+
+# Monitor GVD graph
+ros2 topic echo /gvd/graph
+
+# Monitor control mode
+ros2 topic echo /Control/mod
+
+# Monitor path planning status
+ros2 topic echo /aos/path_planning_status
 ```
 
-#### 2. **Simulation Testing**
-```bash
-# Launch with simulation data
-ros2 launch orbit_planner orbit_exploration.launch.py use_sim_time:=true
+### Service Calls
 
-# Test with bag file
-ros2 bag play your_data.bag
+```bash
+# Force transition to next waypoint
+ros2 service call /aos/next_waypoint std_srvs/srv/Empty
+
+# Save map
+ros2 service call /lio_sam/save_map lio_sam_wo/srv/SaveMap "{resolution: 0.05, destination: '/path/to/save'}"
 ```
 
-#### 3. **Visualization Testing**
-```bash
-# Check if all markers are published
-ros2 topic list | grep orbit_planner
+## ⚙️ Parameter Configuration
 
-# Monitor specific topics
-ros2 topic echo /orbit_planner/frontiers
-ros2 topic echo /orbit_planner/orbit_anchors
-ros2 topic echo /orbit_planner/trajectory
-```
+Main parameters can be configured in `config/aos_planner_params.yaml` file.
 
-#### 4. **Performance Testing**
-```bash
-# Monitor CPU usage
-htop
-
-# Check memory usage
-ros2 run orbit_planner orbit_planner_node --ros-args --log-level debug
-```
-
-## Configuration
-
-### Parameter Settings
-
-Key parameters can be configured in `config/orbit_planner_params.yaml`:
+### Common Parameters
 
 ```yaml
-# Robot parameters
-robot_radius: 0.4
-safety_margin: 0.1
-
-# Exploration parameters
-max_planning_distance: 50.0
-frontier_cluster_min_size: 5.0
-goal_tolerance: 1.0
-
-# Tree detection parameters
-tree_height_min: 0.4
-tree_height_max: 0.7
-tree_cluster_tolerance: 0.5
-tree_min_cluster_size: 10
-
-# Orbit anchor parameters
-orbit_radius: 2.0
-orbit_spacing: 1.0
-
-# Path planning parameters
-path_resolution: 0.1
-path_smoothing_factor: 0.5
-
-# Cost weights
-yaw_change_weight: 0.5
-frontier_gain_weight: 1.0
-distance_weight: 1.0
+/**:
+  ros__parameters:
+    # Topic name configuration
+    voronoi_seeds_topic: "/voronoi_seeds"
+    exploration_tree_rows_info_topic: "/exploration_tree_rows_info"
+    tree_rows_all_topic: "/tree_rows_all"
+    skeletonized_occupancy_grid_topic: "/skeletonized_occupancy_grid"
+    occupancy_grid_topic: "/occupancy_grid"
+    robot_position_topic: "/Local/utm"
+    gvd_graph_topic: "/gvd/graph"
+    current_pos_topic: "/Local/utm"
+    control_mod_topic: "/Control/mod"
 ```
 
-### Topic Remapping
+### Node-Specific Parameter Overrides
 
-To integrate with different SLAM systems, remap topics:
+```yaml
+/aos_seed_gen_node:
+  ros__parameters:
+    clipping_minz: -0.4
+    clipping_maxz: 0.5
+    grid_resolution: 0.05
+    inflation_radius: 0.8
+    waypoint_offset_distance: 2.4
+    cluster_min_length: 2.0
+```
+
+### Runtime Parameter Changes
 
 ```bash
-ros2 launch orbit_planner orbit_exploration.launch.py \
-  --ros-args -r /lio_sam/mapping/map_global:=/your_pointcloud_topic \
-             -r /lio_sam/mapping/odometry:=/your_odometry_topic
+# Get parameter value
+ros2 param get /aos_seed_gen_node grid_resolution
+
+# Set parameter value
+ros2 param set /aos_seed_gen_node grid_resolution 0.1
+
+# Load parameter file
+ros2 param load /aos_seed_gen_node config/aos_planner_params.yaml
 ```
 
-## API Reference
+## 📡 API Reference
 
-### Services
+### Custom Messages
 
-- `/orbit_planner/start_exploration` (std_srvs/srv/Empty): Start autonomous exploration
-- `/orbit_planner/stop_exploration` (std_srvs/srv/Empty): Stop exploration
+#### GvdGraph (`aos/msg/GvdGraph`)
 
-### Subscribed Topics
+Message representing GVD graph structure.
 
-- `/lio_sam/mapping/map_global` (sensor_msgs/msg/PointCloud2): Input point cloud from LIO-SAM
-- `/lio_sam/mapping/odometry` (geometry_msgs/msg/PoseStamped): Robot pose from LIO-SAM
-- `/orbit_planner/exploration_area` (geometry_msgs/msg/PolygonStamped): Exploration area definition
-
-### Published Topics
-
-- `/orbit_planner/trajectory` (nav_msgs/msg/Path): Planned exploration path
-- `/orbit_planner/goal` (geometry_msgs/msg/PoseStamped): Current exploration goal
-- `/orbit_planner/frontiers` (visualization_msgs/msg/MarkerArray): Frontier visualization
-- `/orbit_planner/orbit_anchors` (visualization_msgs/msg/MarkerArray): Orbit anchor visualization
-- `/orbit_planner/visited` (visualization_msgs/msg/MarkerArray): Visited goals visualization
-- `/orbit_planner/occupancy_grid` (nav_msgs/msg/OccupancyGrid): Occupancy grid map
-
-## Developer Guide
-
-### Code Structure
-
-```
-orbit_planner/
-├── src/                           # Source code
-│   ├── orbit_planner_node.cpp     # Main planner node
-│   ├── orbit_voxblox_interface.cpp # Voxblox integration
-│   ├── tree_clusterer.cpp         # Tree detection & clustering
-│   ├── frontier_detector.cpp      # Frontier detection
-│   ├── path_planner.cpp           # Path planning algorithms
-│   ├── orbit_anchor_generator.cpp # Orbit anchor generation
-│   └── orbit_panel_plugin.cpp     # RViz2 panel plugin
-├── include/orbit_planner/         # Header files
-│   ├── orbit_planner_node.hpp
-│   ├── orbit_voxblox_interface.hpp
-│   ├── tree_clusterer.hpp
-│   ├── frontier_detector.hpp
-│   ├── path_planner.hpp
-│   ├── orbit_anchor_generator.hpp
-│   └── orbit_panel_plugin.hpp
-├── launch/                        # Launch files
-│   └── orbit_exploration.launch.py
-├── config/                        # Configuration files
-│   └── orbit_planner_params.yaml
-├── rviz/                          # RViz configurations
-│   ├── orbit_planner.rviz
-│   └── orbit_panel_plugin.xml
-└── test/                          # Unit tests
-    └── test_orbit_planner.cpp
+```cpp
+std_msgs/Header header
+float64 resolution
+float64 origin_x
+float64 origin_y
+int32 num_nodes
+int32 num_edges
+geometry_msgs/Point[] nodes
+int32[] node_labels          # 0=normal, 1=TL, 2=TR, 4=BL, 8=BR
+int32[] node_label_clusters  # Cluster ID for each label
+int32[] node_label_types     # Label type for each (0=TL, 1=TR, 2=BL, 3=BR)
+int32[] node_label_counts    # Number of labels for each node
+int32[] edges                # Edge connections [from_idx, to_idx, ...]
+float32[] edge_lengths       # Edge lengths
+float32[] edge_clearances    # Edge clearances
 ```
 
-### Adding New Features
+### Custom Services
 
-1. **Define Interface**: Add function declarations in header files
-2. **Implement Logic**: Write implementation in corresponding `.cpp` files
-3. **Update Build**: Add new sources to `CMakeLists.txt`
-4. **Add Parameters**: Update configuration files with new parameters
-5. **Write Tests**: Create unit tests for new functionality
-6. **Update Documentation**: Update README and code comments
+#### GpsToRelative (`aos/srv/GpsToRelative`)
 
-## Troubleshooting
+Service for converting GPS coordinates to relative coordinates.
+
+**Request:**
+```cpp
+float64[] longitudes    # GPS longitude array
+float64[] latitudes     # GPS latitude array
+```
+
+**Response:**
+```cpp
+bool success            # Conversion success status
+string message          # Error message
+float64[] relative_x    # Relative x coordinates from UTM origin
+float64[] relative_y    # Relative y coordinates from UTM origin
+float64[] base_x        # base_link coordinate system x coordinates
+float64[] base_y        # base_link coordinate system y coordinates
+bool[] conversion_success  # Conversion success status for each coordinate
+```
+
+## 🔍 Troubleshooting
 
 ### Common Issues
 
-1. **Voxblox Compilation Error**: Check Eigen3 dependency installation
-2. **RViz Plugin Load Failure**: Verify package build and environment setup
-3. **Memory Issues**: Adjust voxel_size parameter in configuration
-4. **TF Transform Errors**: Ensure proper frame_id configuration
-5. **Point Cloud Processing Issues**: Check PCL library installation
+#### 1. Point Cloud Not Received
 
-### Debugging
+**Symptom**: `aos_seed_gen_node` is not receiving point cloud
 
+**Solution**:
 ```bash
-# Set debug logging level
-export RCUTILS_LOGGING_SEVERITY_THRESHOLD=DEBUG
+# Check LIO-SAM topics
+ros2 topic list | grep lio_sam
 
-# Debug specific node
-ros2 run orbit_planner orbit_planner_node --ros-args --log-level debug
+# Check point cloud topic
+ros2 topic echo /lio_sam/mapping/global_map --once
 
-# Check topic connections
-ros2 topic list
-ros2 topic info /orbit_planner/trajectory
-
-# Monitor system performance
-ros2 run orbit_planner orbit_planner_node --ros-args --log-level info
+# Remap topic name
+ros2 run aos aos_seed_gen_node --ros-args \
+  -p global_map_topic:=/your_pointcloud_topic
 ```
+
+#### 2. GVD Graph Not Generated
+
+**Symptom**: No messages published on `/gvd/graph` topic
+
+**Solution**:
+- Check if Voronoi seeds are sufficient: `ros2 topic echo /voronoi_seeds`
+- Check skeletonized grid: `ros2 topic echo /skeletonized_occupancy_grid`
+- Check logs: `ros2 run aos aos_gvd_node --ros-args --log-level debug`
+
+#### 3. Path Not Planned
+
+**Symptom**: No path published on `/aos/path` topic
+
+**Solution**:
+```bash
+# Check GVD graph
+ros2 topic echo /gvd/graph --once
+
+# Check robot position
+ros2 topic echo /Local/utm
+
+# Check path planning status
+ros2 topic echo /aos/path_planning_status
+
+# Enable debug mode
+ros2 run aos aos_path_gen_node --ros-args \
+  -p debug_mode:=true \
+  -p log_level:=DEBUG
+```
+
+#### 4. RViz2 Panel Not Loading
+
+**Symptom**: Cannot find AOS panel in RViz2
+
+**Solution**:
+```bash
+# Check package build
+colcon build --packages-select aos
+
+# Check plugin file
+cat ~/ros2_ws/src/aos/rviz/aos_panel_plugin.xml
+
+# Restart RViz2
+pkill rviz2
+ros2 run rviz2 rviz2
+```
+
+#### 5. GPS Coordinate Conversion Error
+
+**Symptom**: GPS to UTM conversion fails
+
+**Solution**:
+- Check UTM zone number: `ros2 param get /gps_to_utm_node utm_zone`
+- Check GPS signal: `ros2 topic echo /fix`
+- Check GeographicLib installation: `dpkg -l | grep geographic`
 
 ### Performance Optimization
 
-1. **Reduce Voxel Size**: For higher resolution but more memory usage
-2. **Adjust Planning Rate**: Lower frequency for less CPU usage
-3. **Limit Exploration Distance**: Reduce max_planning_distance parameter
-4. **Optimize Tree Detection**: Adjust clustering parameters for your environment
+#### Reduce Memory Usage
 
-## License
+```yaml
+# Increase grid resolution (reduces memory, decreases accuracy)
+grid_resolution: 0.1  # Default: 0.05
 
-MIT License
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## References
-
-- [Voxblox: Incremental 3D Euclidean Signed Distance Fields for on-board MAV planning](https://github.com/ethz-asl/voxblox)
-- [LIO-SAM: Tightly-coupled Lidar Inertial Odometry via Smoothing and Mapping](https://github.com/TixiaoShan/LIO-SAM)
-- [ROS2 Navigation Stack](https://github.com/ros-planning/navigation2)
-- [PCL: Point Cloud Library](https://pointclouds.org/)
-- [RViz2: 3D Visualization Tool](https://github.com/ros2/rviz)
-
-## Citation
-
-If you use this package in your research, please cite:
-
-```bibtex
-@article{orbit_planner_2025,
-  title={Orbit Planner: Map-Free Navigation for Orchard Monitoring and Mapping},
-  author={Woo, Sangbeom and Kim, Duksu},
-  journal={Computers and Electronics in Agriculture},
-  year={2025}
-}
+# Reduce clipping range
+clipping_maxx: 50.0  # Default: 72.0
+clipping_maxy: 15.0  # Default: 20.0
 ```
 
-## Contact
+#### Reduce CPU Usage
 
-Development Team: developer@example.com
+```yaml
+# Reduce graph publish rate
+max_graph_publish_rate: 5.0  # Default: 10.0
 
-## Acknowledgments
+# Adjust log level
+log_level: "WARN"  # Disable DEBUG mode
+```
 
-- KoreaTech School of Computer Science and Engineering
+### Debugging Tips
+
+```bash
+# Set log level for all nodes
+export RCUTILS_LOGGING_SEVERITY_THRESHOLD=DEBUG
+
+# Enable debug mode for specific node
+ros2 run aos aos_path_gen_node --ros-args \
+  -p debug_mode:=true \
+  -p log_level:=DEBUG
+
+# Check topic connections
+ros2 topic info /aos/path
+ros2 topic hz /aos/path
+
+# Check TF tree
+ros2 run tf2_ros tf2_echo base_link map
+```
+
+## 🤝 Contributing
+
+Thank you for contributing to the project! How to contribute:
+
+1. **Fork** the repository
+2. **Create** a feature branch (`git checkout -b feature/amazing-feature`)
+3. **Commit** your changes (`git commit -m 'Add some amazing feature'`)
+4. **Push** to the branch (`git push origin feature/amazing-feature`)
+5. **Open** a Pull Request
+
+### Coding Style
+
+- C++ code follows Google C++ Style Guide
+- Follows ROS2 naming conventions
+- Add comments for all new features
+
+### Testing
+
+When adding new features, please write tests:
+
+```bash
+# Run tests
+colcon test --packages-select aos
+
+# Check test results
+colcon test-result --verbose
+```
+
+## 📄 License
+
+This project is distributed under the MIT License. See the `LICENSE` file for details.
+
+## 📚 References
+
+- [ROS2 Humble Documentation](https://docs.ros.org/en/humble/)
+- [LIO-SAM: Tightly-coupled Lidar Inertial Odometry](https://github.com/TixiaoShan/LIO-SAM)
+- [PCL: Point Cloud Library](https://pointclouds.org/)
+- [GeographicLib Documentation](https://geographiclib.sourceforge.io/)
+- [RViz2 Documentation](https://github.com/ros2/rviz)
+
+## 📧 Contact
+
+- **Developers**: Sangbeom Woo, Duksu Kim
+- **Email**: bluekds@koreatech.ac.kr
+- **Affiliation**: School of Computer Science and Engineering, KoreaTech
+
+## 🙏 Acknowledgments
+
+- School of Computer Science and Engineering, KoreaTech
 - Active Orchard SLAM project team
-- ROS2 community for excellent tools and documentation
+- ROS2 community
+
+---
+
+**Note**: This package has been tested in orchard environments. Parameter adjustment may be required when used in other environments.

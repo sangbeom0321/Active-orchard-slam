@@ -815,8 +815,8 @@ This project is distributed under the MIT License. See the `LICENSE` file for de
 
 ## 📧 Contact
 
-- **Developers**: Sangbeom Woo, Duksu Kim
-- **Email**: bluekds@koreatech.ac.kr
+- **Developers**: Sangbeom Woo
+- **Email**: woosb24@gmail.com
 - **Affiliation**: School of Computer Science and Engineering, KoreaTech
 
 ## 🙏 Acknowledgments
